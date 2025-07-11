@@ -1,14 +1,12 @@
-FROM alpine:3.21.3
+FROM python:3.13-alpine
 
-RUN apk --no-cache add coreutils util-linux-misc bash curl jq github-cli
+RUN apk --no-cache add coreutils util-linux-misc bash && adduser -u 1001 -D runuser && pip3 install --no-cache-dir configargparse
 
-# Download and install latest version of vault
-RUN curl -L -o /tmp/vault.zip https://releases.hashicorp.com/vault/1.12.2/vault_1.12.2_linux_amd64.zip \
-  && unzip /tmp/vault.zip -d /usr/local/bin/ \
-  && rm -f /tmp/vault.zip
+USER runuser
+ENV HOME=/home/runuser
+COPY --chown=runuser:runuser setenv.py entrypoint.sh $HOME/
+RUN chmod +x $HOME/setenv.py $HOME/entrypoint.sh
 
-COPY bin/setenv.py /usr/local/bin/setenv.py
+WORKDIR ${HOME}
 
-COPY entrypoint.sh /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/home/runuser/entrypoint.sh"]
