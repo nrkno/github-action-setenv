@@ -1,0 +1,95 @@
+# action.yml
+name: "vault-to-k8s-config"
+description: "Create kube-config from vault secrets and vault kubernetes auth endpoint"
+inputs:
+  name:
+    description: "Vault app_role_applications name"
+    required: true
+  env:
+    description: "Vault environment eg: prod"
+    required: true
+  cluster:
+    description: "Can be used multiple times, exported in KUBE_CONFIG_PATH: ~/.kube/atlantis/config"
+    required: false
+  azure:
+    description: "Get Azure credentials, exported as ARM_CLIENT_ID and ARM_CLIENT_SECRET"
+    required: false
+  azure-no-arm:
+    description: "Do not export ARM_CLIENT_ID and ARM_CLIENT_SECRET, only TF_VAR_azure_client_id and TF_VAR_azure_client_secret"
+    required: false
+  gcp:
+    description: 'GCP project names, creates TF_VAR_gcp_project_name for use in "credentials" in google provider'
+    required: false
+  terraform-registry:
+    description: 'Get Terraform registry token, expects to be found in vault under "token" in secret/applications/{name}/{env}/terraform-registry'
+    required: false
+  no-wait:
+    description: "Do not wait for credentials to propagate"
+    required: false
+  eval:
+    description: "Output as export statements, for use with eval $()"
+    required: false
+  new-line:
+    description: "Output as text separated by newline"
+    required: false
+  debug:
+    description: "Print progress messages"
+    required: false
+  token:
+    description: "Vault token, defaults to /vault/secrets/token"
+    required: false
+  vault-role-id-name:
+    description: 'Name of the environment variable for Vault role ID, defaults to "TF_VAR_vault_role_id"'
+    required: false
+  vault-secret-id-name:
+    description: 'Name of the environment variable for Vault secret ID, defaults to "TF_VAR_vault_secret_id"'
+    required: false
+  cache:
+    description: "Cache/ use cached credentials"
+    required: false
+  cache-file:
+    description: "Path and name to cache file, defaults to /tmp/{repo_name}_{workflow_name}.cache.json when running in atlantis, or /tmp/{current_workdir}.cache.json when running from shell"
+    required: true
+  secret:
+    description: 'Every key/value pair in vault applications "setenv" secret is added to env vars'
+    required: false
+  vault-secret:
+    description: "Get secret from vault, specify path to secret, key in secret and name of environment variable to export. Can be used multiple times, e.g. --vault-secret secret/applications/myapp/prod:mykey:MY_VAR_NAME. If using * as key, all keys in secret will be exported with the specified var_name as prefix, e.g.: --vault-secret secret/applications/myapp/prod:*:MY_PREFIX_ will export MY_PREFIX_key1, MY_PREFIX_key2 etc."
+    required: false
+  myip-url:
+    description: "URL to get current IP address, default is http://icanhazip.com"
+    required: false
+runs:
+  using: "docker"
+  image: "Dockerfile"
+  args:
+    - --name
+    - ${{ inputs.name }}
+    - --env
+    - ${{ inputs.env }}
+    - --cluster
+    - ${{ for cluster in inputs.cluster.split(',').append('--cluster') if cluster.strip() }}
+    - ${{ if inputs.azure --azure}}
+    - ${{ if inputs.azure-no-arm --azure-no-arm}}
+    - --gcp
+    - ${{ for gcp in inputs.gcp.split(',').append('--gcp') if gcp.strip() }}
+    - --terraform-registry
+    - ${{ inputs.terraform-registry }}
+    - --no-wait
+    - ${{ inputs.no-wait }}
+    - ${{ if inputs.eval --eval }}
+    - ${{ if inputs.new-line --new-line }}
+    - ${{ if inputs.debug --debug }}
+    - ${{ if inputs.token --token }}
+    - --vault-role-id-name
+    - ${{ inputs.vault-role-id-name }}
+    - --vault-secret-id-name
+    - ${{ inputs.vault-secret-id-name }}
+    - ${{ if inputs.cache --cache }}
+    - --cache-file
+    - ${{ inputs.cache-file }}
+    - ${{ if inputs.secret --secret }}
+    - --vault-secret
+    - ${{ for vault_secret in inputs.vault-secret.split(',').append('--vault-secret') if vault_secret.strip() }}
+    - --myip-url
+    - ${{ inputs.myip-url }}

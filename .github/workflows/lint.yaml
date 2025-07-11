@@ -1,0 +1,9 @@
+on:
+  pull_request:
+
+jobs:
+  commitlint:
+    uses: nrkno/github-workflow-semantic-release/.github/workflows/workflow.yaml@v3
+    with:
+      runs-on: ubuntu-22.04
+      release-enabled: false
