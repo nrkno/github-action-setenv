@@ -51,45 +51,40 @@ inputs:
     description: "Path and name to cache file, defaults to /tmp/{repo_name}_{workflow_name}.cache.json when running in atlantis, or /tmp/{current_workdir}.cache.json when running from shell"
     required: true
   secret:
-    description: 'Every key/value pair in vault applications "setenv" secret is added to env vars'
+    description: 'Every key/value pair in vault applications "setenv" secret is added to env vars on hardcoded path secret/applications/{name}/{env}/setenv'
     required: false
   vault-secret:
-    description: "Get secret from vault, specify path to secret, key in secret and name of environment variable to export. Can be used multiple times, e.g. --vault-secret secret/applications/myapp/prod:mykey:MY_VAR_NAME. If using * as key, all keys in secret will be exported with the specified var_name as prefix, e.g.: --vault-secret secret/applications/myapp/prod:*:MY_PREFIX_ will export MY_PREFIX_key1, MY_PREFIX_key2 etc."
+    description: "Get secret from vault, spec path to secret, key in secret and name of environment variable to export. Can be used multiple times, e.g. --vault-secret secret/applications/myapp/prod:mykey:MY_VAR_NAME. using * as key, all keys in secret will be exported with the speced var_name as prefix, e.g.: --vault-secret secret/applications/myapp/prod:*:MY_PREFIX_ will export MY_PREFIX_key1, MY_PREFIX_key2 etc."
     required: false
   myip-url:
     description: "URL to get current IP address, default is http://icanhazip.com"
     required: false
+
 runs:
   using: "docker"
   image: "Dockerfile"
+  env:
+    VAULT_ADDR: ${{ inputs.VAULT_ADDR }}
   args:
-    - --name
-    - ${{ inputs.name }}
-    - --env
-    - ${{ inputs.env }}
-    - --cluster
-    - ${{ for cluster in inputs.cluster.split(',').append('--cluster') if cluster.strip() }}
-    - ${{ if inputs.azure --azure}}
-    - ${{ if inputs.azure-no-arm --azure-no-arm}}
-    - --gcp
-    - ${{ for gcp in inputs.gcp.split(',').append('--gcp') if gcp.strip() }}
-    - --terraform-registry
-    - ${{ inputs.terraform-registry }}
-    - --no-wait
-    - ${{ inputs.no-wait }}
-    - ${{ if inputs.eval --eval }}
-    - ${{ if inputs.new-line --new-line }}
-    - ${{ if inputs.debug --debug }}
-    - ${{ if inputs.token --token }}
-    - --vault-role-id-name
-    - ${{ inputs.vault-role-id-name }}
-    - --vault-secret-id-name
-    - ${{ inputs.vault-secret-id-name }}
-    - ${{ if inputs.cache --cache }}
-    - --cache-file
-    - ${{ inputs.cache-file }}
-    - ${{ if inputs.secret --secret }}
-    - --vault-secret
-    - ${{ for vault_secret in inputs.vault-secret.split(',').append('--vault-secret') if vault_secret.strip() }}
-    - --myip-url
-    - ${{ inputs.myip-url }}
+    - --name ${{ inputs.name }}
+    - --env ${{ inputs.env }}
+    ## Kubernetes Cluster
+    - --cluster ${{ inputs.cluster }}
+    - --azure ${{ inputs.azure}}
+    - --azure-no-arm ${{ inputs.azure-no-arm }}
+    ## Google Cloud credentials
+    - --gcp ${{ inputs.gcp }}
+    - --terraform-registry ${{ inputs.terraform-registry }}
+    - --no-wait ${{ inputs.no-wait }}
+    - --eval ${{ inputs.eval }}
+    - --new-line ${{ inputs.new-line }}
+    - --debug ${{ inputs.debug }}
+    - --token ${{ inputs.token }}
+    - --vault-role-id-name ${{ inputs.vault-role-id-name }}
+    - --vault-secret-id-name ${{ inputs.vault-secret-id-name }}
+    - --cache ${{ inputs.cache }}
+    - --cache-file ${{ inputs.cache-file }}
+    - --secret ${{ inputs.secret }}
+    - --vault-secret ${{ inputs.vault-secret }}
+    - --vault-secret ${{ inputs.vault-secret }}
+    - --myip-url ${{ inputs.myip-url }}
