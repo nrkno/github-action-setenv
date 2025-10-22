@@ -1,13 +1,13 @@
 on:
   push:
     paths-ignore:
-    - '**/.github/**'
-    - '**README.md'
+      - "**/.github/**"
+      - "**README.md"
     branches:
       - main
 
 jobs:
   release:
-    uses: nrkno/github-workflow-semantic-release/.github/workflows/workflow.yaml@v3
+    uses: nrkno/github-workflow-semantic-release/.github/workflows/workflow.yaml@v4
     with:
       runs-on: ubuntu-22.04
