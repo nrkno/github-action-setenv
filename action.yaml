@@ -17,6 +17,15 @@ inputs:
   azure:
     description: "Get Azure credentials, exported as ARM_CLIENT_ID and ARM_CLIENT_SECRET"
     required: false
+  azure_tenant_id:
+    description: "Azure tenant ID. Required if --azure is set"
+    required: false
+  azure_subscription_id:
+    description: "Azure subscription ID. Subscription ID for which your state is stored. Required if --azure is set"
+    required: false
+  azure_resource_group:
+    description: "Azure resource group name. Resource group for which your state is stored. Required if --azure is set"
+    required: false
   azure_no_arm:
     description: "Do not export ARM_CLIENT_ID and ARM_CLIENT_SECRET, only TF_VAR_azure_client_id and TF_VAR_azure_client_secret"
     required: false
