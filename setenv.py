@@ -13,6 +13,9 @@ parser.add('--name', required=True, metavar="my-terraform-config", help='Vault a
 parser.add('--env', required=True, metavar="prod", help='Vault environment eg: prod')
 parser.add('--cluster', action='append', metavar="cluster:role:namespace", default=[], help='Can be used multiple times, exported in KUBE_CONFIG_PATH: ~/.kube/atlantis/config')
 parser.add('--azure', action='store_true', help='Get Azure credentials, exported as ARM_CLIENT_ID and ARM_CLIENT_SECRET')
+parser.add('--azure-tenant-id', help='Azure tenant ID. Required if --azure is set')
+parser.add('--azure-subscription-id', help='Azure subscription ID. Subscription ID for which your state is stored. Required if --azure is set')
+parser.add('--azure-resource-group', help='Azure resource group name. Resource group for which your state is stored. Required if --azure is set')
 parser.add('--azure-no-arm', action='store_true', help='Do not export ARM_CLIENT_ID and ARM_CLIENT_SECRET, only TF_VAR_azure_client_id and TF_VAR_azure_client_secret')
 parser.add('--gcp', action='append', metavar="my-project", default=[], help='GCP project names, creates TF_VAR_gcp_project_name for use in "credentials" in google provider')
 parser.add('--terraform-registry', action='store_true', help='Get Terraform registry token, expects to be found in vault under "token" in secret/applications/{name}/{env}/terraform-registry')
@@ -170,6 +173,40 @@ def vault_request(path, method='GET', data=None):
     response = urllib.request.urlopen(req)
     return json.loads(response.read())
 
+def _azure_get_token(tenant_id: str, client_id: str, client_secret: str) -> str:
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    data = urllib.parse.urlencode(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": "https://management.azure.com/.default",
+            "grant_type": "client_credentials",
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        token_url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        payload = json.load(resp)
+    return payload["access_token"]
+
+def azure_check_resource_group(tenant_id: str, subscription_id: str, resource_group: str, token: str) -> bool:
+    url = (
+        f"https://management.azure.com/subscriptions/{subscription_id}"
+        f"/resourcegroups/{resource_group}?api-version=2021-04-01"
+    )
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            return True
+    except urllib.error.HTTPError as exc:
+        if exc.code in (403, 404):
+            return False
+        raise
+
 env_vars = []
 
 # Log in using approle
@@ -269,6 +306,30 @@ try:
                 ("ARM_CLIENT_ID", azure_creds['client_id']),
                 ("ARM_CLIENT_SECRET", azure_creds['client_secret'])
             ])
+        
+        tries=0
+        status("Validating Azure credentials...")
+        while True:
+            token = _azure_get_token(
+                tenant_id=args.azure_tenant_id,
+                client_id=azure_creds['client_id'],
+                client_secret=azure_creds['client_secret']
+            )
+            if azure_check_resource_group(
+                tenant_id=args.azure_tenant_id,
+                subscription_id=args.azure_subscription_id,
+                resource_group=args.azure_resource_group,
+                token=token
+            ):
+                status("Azure credentials are valid and resource group is accessible.")
+                break
+            else:
+                status("Waiting for Azure credentials to propagate...")
+                tries += 1
+                if tries >= 6:
+                    status("Azure credentials did not propagate in time, exiting...", True)
+                    break
+                time.sleep(5)
 
     if args.gcp:
         for project in args.gcp:
