@@ -1,6 +1,6 @@
 # action.yml
-name: "vault-to-k8s-config"
-description: "Create kube-config from vault secrets and vault kubernetes auth endpoint"
+name: "setenv"
+description: "Set enviroment variables from Vault app_role_applications"
 inputs:
   name:
     description: "Vault app_role_applications name"
@@ -20,12 +20,15 @@ inputs:
   azure_tenant_id:
     description: "Azure tenant ID. Required if --azure is set"
     required: false
+    default: ""
   azure_subscription_id:
     description: "Azure subscription ID. Subscription ID for which your state is stored. Required if --azure is set"
     required: false
+    default: ""
   azure_resource_group:
     description: "Azure resource group name. Resource group for which your state is stored. Required if --azure is set"
     required: false
+    default: ""
   azure_no_arm:
     description: "Do not export ARM_CLIENT_ID and ARM_CLIENT_SECRET, only TF_VAR_azure_client_id and TF_VAR_azure_client_secret"
     required: false
