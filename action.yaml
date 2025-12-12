@@ -77,25 +77,4 @@ inputs:
 
 runs:
   using: "docker"
-  image: "Dockerfile"
-  # args:
-  #   - --name ${{ inputs.name }}
-  #   - --env ${{ inputs.env }}
-  #   - --cluster ${{ inputs.cluster }}
-  #   - --azure ${{ inputs.azure}}
-  #   - --azure-no-arm ${{ inputs.azure-no-arm }}
-  #   - --gcp ${{ inputs.gcp }}
-  #   - --terraform-registry ${{ inputs.terraform-registry }}
-  #   - --no-wait ${{ inputs.no-wait }}
-  #   - --eval ${{ inputs.eval }}
-  #   - --new-line ${{ inputs.new-line }}
-  #   - --debug ${{ inputs.debug }}
-  #   - --token ${{ inputs.token }}
-  #   - --vault-role-id-name ${{ inputs.vault-role-id-name }}
-  #   - --vault-secret-id-name ${{ inputs.vault-secret-id-name }}
-  #   - --cache ${{ inputs.cache }}
-  #   - --cache-file ${{ inputs.cache-file }}
-  #   - --secret ${{ inputs.secret }}
-  #   - --vault-secret ${{ inputs.vault-secret }}
-  #   - --vault-secret ${{ inputs.vault-secret }}
-  #   - --myip-url ${{ inputs.myip-url }}
+  image: "docker://ghcr.io/nrkno/github-action-setenv:v2.0.0"
