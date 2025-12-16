@@ -355,8 +355,9 @@ try:
     if args.vault_secret:
         status("Getting secrets from vault...")
         for vault_secret in args.vault_secret:
-            if vault_secret == "None":
+            if vault_secret == "None" or vault_secret == "":
                 continue
+            
             path, key, var_name = vault_secret.split(':')
             if key == '*':
                 status(f"Fetching all keys from secret at {path}...")
