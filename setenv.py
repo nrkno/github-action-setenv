@@ -19,7 +19,6 @@ parser.add('--azure-resource-group', help='Azure resource group name. Resource g
 parser.add('--azure-no-arm', action='store_true', help='Do not export ARM_CLIENT_ID and ARM_CLIENT_SECRET, only TF_VAR_azure_client_id and TF_VAR_azure_client_secret')
 parser.add('--gcp', action='append', metavar="my-project", default=[], help='GCP project names, creates TF_VAR_gcp_project_name for use in "credentials" in google provider')
 parser.add('--terraform-registry', action='store_true', help='Get Terraform registry token, expects to be found in vault under "token" in secret/applications/{name}/{env}/terraform-registry')
-parser.add('--no-wait', action='store_true', help='Do not wait for credentials to propagate')
 parser.add('--eval', action='store_true', help='Output as export statements, for use with eval $()')
 parser.add('--new-line', action='store_true', help='Output as key=value separated by newline. If not set, output will be comma separated')
 parser.add('--debug', action='store_true', help='Print progress messages')
@@ -92,6 +91,27 @@ else:
 VAULT_ADDR = os.getenv('VAULT_ADDR', 'http://127.0.0.1:8200')
 VAULT_TOKEN = args.token
 
+def get_cache_filename():
+    # If cache file is specified, use it
+    if args.cache_file:
+        return args.cache_file
+    
+    # When running from shell, use current workdir
+    if args.token:
+        return f'/tmp/{os.getcwd().split("/")[-1]}.cache.json'
+        
+    path_parts = os.getcwd().split("/")
+    if not len(path_parts) >= 3:
+        status("Could not generate cache filename, exiting...", True)
+        sys.exit(0)
+        
+    # When running in atlantis, use repo and workflow name
+    return f"/tmp/{path_parts[-3]}_{path_parts[-2]}.cache.json"
+
+cache_path = get_cache_filename()
+status(f"Setting {cache_path} as cache path") 
+
+
 def get_credentials_cache():
     """Get credentials from cache file"""
     if not args.cache:
@@ -155,8 +175,12 @@ def output_env_vars(env_vars):
 cached_env_vars = get_credentials_cache()
 if cached_env_vars:
     output_env_vars(cached_env_vars)
-    sys.exit(0)
 
+VAULT_ADDR = os.getenv('VAULT_ADDR', 'http://127.0.0.1:8200')
+VAULT_TOKEN = (
+    open('/vault/secrets/token').read().strip() if os.getenv('KUBERNETES_PORT')
+    else args.token or exit('No Vault token found, specify in --token')
+)
 status(f"Using vault address: {VAULT_ADDR}", False)
 
 vault_token = ""
@@ -383,9 +407,6 @@ except urllib.error.HTTPError as e:
     status(f"HTTP Error: {e.code} - {e.reason}", True)
     status(f"Error response body: {e.read().decode()}", True)
     sys.exit(1)
-
-status(f"Sleeping for {'0' if args.no_wait else '30'} seconds for azure and gcp credentials to propagate...")
-time.sleep(0 if args.no_wait else 30)
 
 set_credentials_cache(env_vars)
 
