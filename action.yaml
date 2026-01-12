@@ -76,5 +76,54 @@ inputs:
     required: false
 
 runs:
-  using: "docker"
-  image: "docker://ghcr.io/nrkno/github-action-setenv:v2.0.1"
+  using: "composite"
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+    
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pip3 install --no-cache-dir configargparse
+    
+    - name: Process vault secrets
+      shell: bash
+      run: |
+        vault_entries=""
+        if [[ -n "${{ inputs.vault_secret }}" ]]; then
+          IFS=',' read -ra SECRET_ENTRIES <<< "${{ inputs.vault_secret }}"
+          for ENTRY in "${SECRET_ENTRIES[@]}"; do
+            echo "Processing vault secret entry: $ENTRY"
+            vault_entry=" --vault-secret \"$ENTRY\""
+            vault_entries="${vault_entries} ${vault_entry}"
+          done
+        fi
+        echo "VAULT_ENTRIES=${vault_entries}" >> $GITHUB_ENV
+    
+    - name: Process GCP projects
+      shell: bash
+      run: |
+        gcp_entries=""
+        if [[ -n "${{ inputs.gcp }}" ]]; then
+          IFS=',' read -ra GCP_ENTRIES <<< "${{ inputs.gcp }}"
+          for ENTRY in "${GCP_ENTRIES[@]}"; do
+            echo "Processing gcp project entry: $ENTRY"
+            gcp_entry=" --gcp \"$ENTRY\""
+            gcp_entries="${gcp_entries}${gcp_entry}"
+          done
+        fi
+        echo "GCP_ENTRIES=${gcp_entries}" >> $GITHUB_ENV
+    
+    - name: Run setenv
+      shell: bash
+      run: |
+        VARIABLES="$(python3 ${{ github.action_path }}/setenv.py${VAULT_ENTRIES}${GCP_ENTRIES})"
+        
+        if [[ -z "$VARIABLES" ]]; then
+          echo "No variables set. Exiting."
+          exit 1
+        fi
+        
+        eval "$VARIABLES"
