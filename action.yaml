@@ -78,6 +78,16 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Vault login
+      id: vault_login_github
+      uses: hashicorp/vault-action@v3
+      with:
+        url: ${{ inputs.vault-address }}
+        role: ${{ inputs.github-role-name }}-${{ inputs.env }}
+        method: jwt
+        path: jwt-github
+        outputToken: true
+
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
@@ -119,7 +129,7 @@ runs:
     - name: Run setenv
       shell: bash
       env:
-        VAULT_TOKEN: ${{ inputs.token || env.VAULT_TOKEN }}
+        VAULT_TOKEN: ${{ steps.vault_login_github.outputs.vault_token }}
       run: |
         CMD="python3 ${{ github.action_path }}/setenv.py --name '${{ inputs.name }}' --env '${{ inputs.env }}'"
         
