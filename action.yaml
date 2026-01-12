@@ -144,6 +144,8 @@ runs:
         [[ -n "${{ inputs.myip_url }}" ]] && CMD="$CMD --myip-url '${{ inputs.myip_url }}'"
         [[ -n "${VAULT_ENTRIES}" ]] && CMD="$CMD${VAULT_ENTRIES}"
         [[ -n "${GCP_ENTRIES}" ]] && CMD="$CMD${GCP_ENTRIES}"
+
+        echo "Running command: $CMD"
         
         VARIABLES="$(eval $CMD)"
         
