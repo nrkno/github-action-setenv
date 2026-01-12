@@ -119,7 +119,31 @@ runs:
     - name: Run setenv
       shell: bash
       run: |
-        VARIABLES="$(python3 ${{ github.action_path }}/setenv.py${VAULT_ENTRIES}${GCP_ENTRIES})"
+        CMD="python3 ${{ github.action_path }}/setenv.py --name '${{ inputs.name }}' --env '${{ inputs.env }}'"
+        
+        [[ -n "${{ inputs.token }}" ]] && CMD="$CMD --token '${{ inputs.token }}'"
+        [[ -n "${{ inputs.cluster }}" ]] && CMD="$CMD --cluster '${{ inputs.cluster }}'"
+        [[ "${{ inputs.azure }}" == "true" ]] && CMD="$CMD --azure"
+        [[ -n "${{ inputs.azure_tenant_id }}" ]] && CMD="$CMD --azure-tenant-id '${{ inputs.azure_tenant_id }}'"
+        [[ -n "${{ inputs.azure_subscription_id }}" ]] && CMD="$CMD --azure-subscription-id '${{ inputs.azure_subscription_id }}'"
+        [[ -n "${{ inputs.azure_resource_group }}" ]] && CMD="$CMD --azure-resource-group '${{ inputs.azure_resource_group }}'"
+        [[ "${{ inputs.azure_no_arm }}" == "true" ]] && CMD="$CMD --azure-no-arm"
+        [[ "${{ inputs.terraform_registry }}" == "true" ]] && CMD="$CMD --terraform-registry"
+        [[ "${{ inputs.no_wait }}" == "true" ]] && CMD="$CMD --no-wait"
+        [[ "${{ inputs.eval }}" == "true" ]] && CMD="$CMD --eval"
+        [[ "${{ inputs.new_line }}" == "true" ]] && CMD="$CMD --new-line"
+        [[ "${{ inputs.debug }}" == "true" ]] && CMD="$CMD --debug"
+        [[ -n "${{ inputs.vault_role_id_name }}" ]] && CMD="$CMD --vault-role-id-name '${{ inputs.vault_role_id_name }}'"
+        [[ -n "${{ inputs.vault_secret_id_name }}" ]] && CMD="$CMD --vault-secret-id-name '${{ inputs.vault_secret_id_name }}'"
+        [[ -n "${{ inputs.vault_secret_id_cidr }}" ]] && CMD="$CMD --vault-secret-id-cidr '${{ inputs.vault_secret_id_cidr }}'"
+        [[ "${{ inputs.cache }}" == "true" ]] && CMD="$CMD --cache"
+        [[ -n "${{ inputs.cache_file }}" ]] && CMD="$CMD --cache-file '${{ inputs.cache_file }}'"
+        [[ "${{ inputs.secret }}" == "true" ]] && CMD="$CMD --secret"
+        [[ -n "${{ inputs.myip_url }}" ]] && CMD="$CMD --myip-url '${{ inputs.myip_url }}'"
+        [[ -n "${VAULT_ENTRIES}" ]] && CMD="$CMD${VAULT_ENTRIES}"
+        [[ -n "${GCP_ENTRIES}" ]] && CMD="$CMD${GCP_ENTRIES}"
+        
+        VARIABLES="$(eval $CMD)"
         
         if [[ -z "$VARIABLES" ]]; then
           echo "No variables set. Exiting."
