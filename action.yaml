@@ -118,6 +118,8 @@ runs:
     
     - name: Run setenv
       shell: bash
+      env:
+        VAULT_TOKEN: ${{ inputs.token }}
       run: |
         CMD="python3 ${{ github.action_path }}/setenv.py --name '${{ inputs.name }}' --env '${{ inputs.env }}'"
         
