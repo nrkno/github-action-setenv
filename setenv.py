@@ -19,7 +19,6 @@ parser.add('--azure-resource-group', help='Azure resource group name. Resource g
 parser.add('--azure-no-arm', action='store_true', help='Do not export ARM_CLIENT_ID and ARM_CLIENT_SECRET, only TF_VAR_azure_client_id and TF_VAR_azure_client_secret')
 parser.add('--gcp', action='append', metavar="my-project", default=[], help='GCP project names, creates TF_VAR_gcp_project_name for use in "credentials" in google provider')
 parser.add('--terraform-registry', action='store_true', help='Get Terraform registry token, expects to be found in vault under "token" in secret/applications/{name}/{env}/terraform-registry')
-parser.add('--no-wait', action='store_true', help='Do not wait for credentials to propagate')
 parser.add('--eval', action='store_true', help='Output as export statements, for use with eval $()')
 parser.add('--new-line', action='store_true', help='Output as key=value separated by newline. If not set, output will be comma separated')
 parser.add('--debug', action='store_true', help='Print progress messages')
@@ -36,61 +35,54 @@ args = parser.parse_args()
 
 vault_role = f"{args.name}-{args.env}"
 
-def status(message, error=False):
+def status(message, error=False, flush=False):
     if args.debug or error:
-        print(message, file=sys.stderr)
+        print(message, file=sys.stderr, flush=flush)
 
-atlantis = False
 github_actions = False
 shell = False
 cache_path = None
 
-# This environment variable is set when running in Kubernetes or in Atlantis
-if os.getenv('KUBERNETES_PORT'):
-    # Get current IP
-    status(f"Getting IP address from { args.myip_url} ...")
-    response = urllib.request.urlopen(args.myip_url)
-    reponse_ip = response.read().decode().strip()
-    my_ip = f"{reponse_ip}/32"
-    # Running in Kubernetes, use the token from the mounted secret
-    atlantis = True
-    args.token = open('/vault/secrets/token').read().strip()
+VAULT_ADDR = os.getenv('VAULT_ADDR', 'http://127.0.0.1:8200')
+VAULT_TOKEN = ""
+
+if os.getenv('GITHUB_ACTIONS'):
+    github_actions = True
+
+if args.token != None or args.token != "":
+    status("Using --token as vault token", False)
+    shell=True
+    VAULT_TOKEN = args.token
+elif os.getenv('VAULT_TOKEN'):
+    status("Using VAULT_TOKEN environment variable as vault token", False)
+    VAULT_TOKEN = os.getenv('VAULT_TOKEN')
+    shell=True
+elif os.path.exists('/vault/secrets/token'):
+    status("Using /vault/secrets/token as vault token", False)
+    shell=True
+    with open('/vault/secrets/token', 'r') as f:
+        VAULT_TOKEN = f.read().strip()
+
+def get_cache_filename():
+    # If cache file is specified, use it
+    if args.cache_file:
+        return args.cache_file
+    
+    # When running from shell, use current workdir
+    if args.token:
+        return f'/tmp/{os.getcwd().split("/")[-1]}.cache.json'
+        
     path_parts = os.getcwd().split("/")
     if not len(path_parts) >= 3:
         status("Could not generate cache filename, exiting...", True)
         sys.exit(0)
         
     # When running in atlantis, use repo and workflow name
-    cache_path = f"/tmp/{path_parts[-3]}_{path_parts[-2]}.cache.json"
+    return f"/tmp/{path_parts[-3]}_{path_parts[-2]}.cache.json"
 
-# This environment variable is set when running in GitHub Actions
-elif os.getenv('GITHUB_ACTIONS'):
-    # Get current IP
-    status(f"Setting IP address from argument to { args.vault_secret_id_cidr } ...")
-    my_ip = args.vault_secret_id_cidr
-    # Running in GitHub Actions, use the token from the environment variable
-    github_actions = True
-    args.token = os.getenv('VAULT_TOKEN', args.token)
-    if not args.token:
-        status("Running in GitHub Actions, but no VAULT_TOKEN found", True)
-        sys.exit(1)
-    cache_path = f"/tmp/{os.getenv('GITHUB_REPOSITORY').replace('/', '_')}_{os.getenv('GITHUB_WORKFLOW').replace(" ", "_").lower()}.cache.json"
+cache_path = get_cache_filename()
+status(f"Setting {cache_path} as cache path") 
 
-# If running from shell, check if token is provided
-else:
-    # Get current IP
-    status(f"Getting IP address from { args.myip_url} ...")
-    response = urllib.request.urlopen(args.myip_url)
-    response_ip = response.read().decode().strip()
-    my_ip = f"{response_ip}/32"
-    # Running from shell, check if token is provided
-    shell = True
-    if not args.token:
-        status("Running from shell, but no Vault token provided. Please specify with --token", True)
-        sys.exit(1)
-
-VAULT_ADDR = os.getenv('VAULT_ADDR', 'http://127.0.0.1:8200')
-VAULT_TOKEN = args.token
 
 def get_credentials_cache():
     """Get credentials from cache file"""
@@ -136,9 +128,6 @@ def set_credentials_cache(env_vars=None):
 def output_env_vars(env_vars):
     """Output environment variables in the specified format"""
     if args.eval:
-        if shell:
-            status("Outputting environment variables for eval...")
-            print(*[f"{'export ' if args.eval else ''}{k}='{v}'" for k, v in env_vars], sep='\n' if args.new_line else ' ')
         if github_actions:
             status("Outputting environment variables for GitHub Actions...")
             for k, v in env_vars:
@@ -146,20 +135,40 @@ def output_env_vars(env_vars):
                 print(f'echo "::add-mask::{v}"')
                 print(f'echo "{k}={v}" >> $GITHUB_OUTPUT')
                 print(f'echo "{k}={v}" >> $GITHUB_ENV')
+        else:
+            status("Outputting environment variables for eval...")
+            print(*[f"{'export ' if args.eval else ''}{k}='{v}'" for k, v in env_vars], sep='\n' if args.new_line else ' ')
     else:
         status("Outputting environment variables...")
         print(*[f"{k}='{v}'" for k, v in env_vars], sep='\n' if args.new_line else ',')
 
     sys.exit(0)
 
+def get_my_ip():
+    """Get current IP address from specified URL"""
+    try:
+        with urllib.request.urlopen(args.myip_url) as response:
+            ip = response.read().decode().strip()
+            return ip
+    except Exception as e:
+        status(f"Error getting IP address from {args.myip_url}: {str(e)}", True)
+        sys.exit(1)
+
+if args.vault_secret_id_cidr and args.vault_secret_id_cidr != "":
+    my_ip = args.vault_secret_id_cidr
+    status(f"Using --vault-secret-id-cidr {my_ip} as CIDR for secret ID", False)
+else:
+    my_ip = f"{get_my_ip()}/32"
+    status(f"Using {my_ip} as CIDR for secret ID", False)
+
 cached_env_vars = get_credentials_cache()
 if cached_env_vars:
     output_env_vars(cached_env_vars)
-    sys.exit(0)
 
+VAULT_ADDR = os.getenv('VAULT_ADDR', 'http://127.0.0.1:8200')
 status(f"Using vault address: {VAULT_ADDR}", False)
 
-vault_token = ""
+
 def vault_request(path, method='GET', data=None):
     req = urllib.request.Request(
         f'{VAULT_ADDR}/v1/{path}',
@@ -196,18 +205,19 @@ def _azure_get_token(tenant_id: str, client_id: str, client_secret: str) -> str:
 def azure_check_resource_group(tenant_id: str, subscription_id: str, resource_group: str, token: str) -> bool:
     url = (
         f"https://management.azure.com/subscriptions/{subscription_id}"
-        f"/resourcegroups/{resource_group}?api-version=2021-04-01"
+        f"/resourcegroups?api-version=2021-04-01"
     )
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req, timeout=10):
             return True
     except urllib.error.HTTPError as exc:
-        if exc.code in (403, 404):
+        if exc.code in (401, 403, 404):
             return False
         raise
 
 env_vars = []
+vault_token = ""
 
 # Log in using approle
 try:
@@ -293,8 +303,8 @@ if args.cluster:
           json.dump(kubeconfig, f, indent=2)
       env_vars.append(("KUBE_CONFIG_PATH", kubeconfig_path))
 
-try:
-    if args.azure:
+if args.azure:
+    try:
         status("Getting Azure credentials...")
         azure_creds = vault_request(f'azure/creds/{vault_role}')['data']
         env_vars.extend([
@@ -308,7 +318,7 @@ try:
             ])
         
         tries=0
-        status("Validating Azure credentials...")
+        status("Validating Azure credentials", False, False)
         while True:
             token = _azure_get_token(
                 tenant_id=args.azure_tenant_id,
@@ -324,68 +334,65 @@ try:
                 status("Azure credentials are valid and resource group is accessible.")
                 break
             else:
-                status("Waiting for Azure credentials to propagate...")
+                status(".", False, False)
                 tries += 1
-                if tries >= 6:
-                    status("Azure credentials did not propagate in time, exiting...", True)
+                if tries >= 60:
+                    status("\nAzure credentials did not propagate in time, exiting...", True)
                     break
                 time.sleep(5)
-
-    if args.gcp:
-        for project in args.gcp:
-            if project == "None" or project == "":
-              continue
-            status(f"Getting GCP credentials for project {project}...")
-            gcp_creds = vault_request(f'gcp/roleset/{vault_role}-{project}/key')
-            gcp_creds = gcp_creds['data']['private_key_data']
-            env_vars.append((f"TF_VAR_gcp_{project.replace('-', '_')}", gcp_creds))
-
-    if args.terraform_registry:
-        status("Getting Terraform registry token...")
-        registry_data = vault_request(f'secret/applications/{args.name}/{args.env}/terraform-registry')
-        registry_token = registry_data['data']['token']
-        env_vars.append(("TF_TOKEN_terraform__registry_nrk_cloud", registry_token))
     
-    if args.secret:
-        status("Getting secrets from 'setenv'")
-        secret_data = vault_request(f'secret/applications/{args.name}/{args.env}/setenv')
-        for k, v in secret_data['data'].items():
-            env_vars.append((k, v))
-    
-    if args.vault_secret:
-        status("Getting secrets from vault...")
-        for vault_secret in args.vault_secret:
-            if vault_secret == "None" or vault_secret == "":
-                continue
-            
-            path, key, var_name = vault_secret.split(':')
-            if key == '*':
-                status(f"Fetching all keys from secret at {path}...")
-                var_name = var_name or 'VAULT_SECRET_'
-                
-                secret_data = vault_request(path)
-                for k, v in secret_data['data'].items():
-                    status(f"Adding key '{var_name}{k}' to environment variables...")
-                    env_vars.append((f"{var_name}{k}", v))
-            
-            else:
-                status(f"Fetching key '{key}' from secret at {path}...")
-                var_name = var_name or 'VAULT_SECRET'
+    except urllib.error.HTTPError as e:
+        status(f"HTTP Error: {e.code} - {e.reason}", True)
+        status(f"Error response body: {e.read().decode()}", True)
+        sys.exit(1)
+
+if args.gcp:
+    for project in args.gcp:
+        if project == "None" or project == "":
+          continue
+        status(f"Getting GCP credentials for project {project}...")
+        gcp_creds = vault_request(f'gcp/roleset/{vault_role}-{project}/key')
+        gcp_creds = gcp_creds['data']['private_key_data']
+        env_vars.append((f"TF_VAR_gcp_{project.replace('-', '_')}", gcp_creds))
+
+if args.terraform_registry:
+    status("Getting Terraform registry token...")
+    registry_data = vault_request(f'secret/applications/{args.name}/{args.env}/terraform-registry')
+    registry_token = registry_data['data']['token']
+    env_vars.append(("TF_TOKEN_terraform__registry_nrk_cloud", registry_token))
+
+if args.secret:
+    status("Getting secrets from 'setenv'")
+    secret_data = vault_request(f'secret/applications/{args.name}/{args.env}/setenv')
+    for k, v in secret_data['data'].items():
+        env_vars.append((k, v))
+
+if args.vault_secret:
+    status("Getting secrets from vault...")
+    for vault_secret in args.vault_secret:
+        if vault_secret == "None" or vault_secret == "":
+            continue
+        
+        path, key, var_name = vault_secret.split(':')
+        if key == '*':
+            status(f"Fetching all keys from secret at {path}...")
+            var_name = var_name or 'VAULT_SECRET_'
             
             secret_data = vault_request(path)
-            if key not in secret_data['data']:
-                status(f"Key '{key}' not found in secret at {path}", True)
-                continue
-            
-            env_vars.append((var_name, secret_data['data'][key]))
-
-except urllib.error.HTTPError as e:
-    status(f"HTTP Error: {e.code} - {e.reason}", True)
-    status(f"Error response body: {e.read().decode()}", True)
-    sys.exit(1)
-
-status(f"Sleeping for {'0' if args.no_wait else '30'} seconds for azure and gcp credentials to propagate...")
-time.sleep(0 if args.no_wait else 30)
+            for k, v in secret_data['data'].items():
+                status(f"Adding key '{var_name}{k}' to environment variables...")
+                env_vars.append((f"{var_name}{k}", v))
+        
+        else:
+            status(f"Fetching key '{key}' from secret at {path}...")
+            var_name = var_name or 'VAULT_SECRET'
+        
+        secret_data = vault_request(path)
+        if key not in secret_data['data']:
+            status(f"Key '{key}' not found in secret at {path}", True)
+            continue
+        
+        env_vars.append((var_name, secret_data['data'][key]))
 
 set_credentials_cache(env_vars)
 
