@@ -1,6 +1,11 @@
 # action.yml
 name: "setenv"
-description: "Set enviroment variables from Vault app_role_applications"
+description: |
+  Set enviroment variables from Vault app_role_applications
+
+  autodoc:
+    permissions:
+      id-token: write
 inputs:
   name:
     description: "Vault app_role_applications name"

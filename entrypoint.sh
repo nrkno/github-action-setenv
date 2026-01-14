@@ -20,7 +20,7 @@ if [[ -v "${INPUT_GCP}" ]]; then
   done
 fi
 
-VARIABLES="$(python3 /home/runuser/setenv.py${vault_entries}${gcp_entries})"
+VARIABLES="$(python3 /setenv.py${vault_entries}${gcp_entries})"
 
 if [[ -z "$VARIABLES" ]]; then
   echo "No variables set. Exiting."
