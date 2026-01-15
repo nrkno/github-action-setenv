@@ -43,7 +43,7 @@ inputs:
   terraform_registry:
     description: 'Get Terraform registry token, expects to be found in vault under "token" in secret/applications/{name}/{env}/terraform-registry'
     required: false
-  no_wait:
+  wait_time:
     description: "Do not wait for credentials to propagate"
     required: false
   eval:
