@@ -35,6 +35,11 @@ parser.add('--myip-url', default='http://icanhazip.com', help='URL to get curren
 args = parser.parse_args()
 
 vault_role = f"{args.name}-{args.env}"
+try:
+    wait_time = float(args.wait_time)
+except ValueError:
+    wait_time = 60
+
 
 def status(message, error=False, flush=False):
     if args.debug or error:
@@ -215,8 +220,16 @@ def find_value_in_dict(d: dict, search_value: str) -> tuple[dict | None, str | N
                     result, matching_key = find_value_in_dict(item, search_value)
                     if result:
                         return result, matching_key
-            elif search_value.lower() in v.lower():
-                return d, k
+            elif isinstance(v, bool):
+                continue
+            elif isinstance(v, (int, float)):
+                if str(search_value) == str(v):
+                    return d, k
+            elif isinstance(v, str):
+                if search_value.lower() == v.lower():
+                    return d, k
+            else:
+                continue
     return None, None
 
 def azure_check_resource_group(tenant_id: str, subscription_id: str, resource_group: str, token: str) -> bool:
@@ -368,7 +381,7 @@ if args.azure:
                     status("\nAzure credentials did not propagate in time, exiting...", args.debug, True)
                     break
                 time.sleep(5)
-        time.sleep(args.wait_time)
+        time.sleep(wait_time)
     
     except urllib.error.HTTPError as e:
         status(f"HTTP Error: {e.code} - {e.reason}", True)
