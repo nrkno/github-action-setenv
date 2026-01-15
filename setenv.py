@@ -26,6 +26,7 @@ parser.add('--token', help='Vault token, defaults to /vault/secrets/token')
 parser.add('--vault-role-id-name', default='TF_VAR_vault_role_id', help='Name of the environment variable for Vault role ID, defaults to "TF_VAR_vault_role_id"')
 parser.add('--vault-secret-id-name', default='TF_VAR_vault_secret_id', help='Name of the environment variable for Vault secret ID, defaults to "TF_VAR_vault_secret_id"')
 parser.add('--vault-secret-id-cidr', default=None, help='CIDR to use for Vault secret ID, defaults to the IP address from --myip-url with /32 suffix')
+parser.add('--wait-time', type=int, default=60, help='Time to wait in seconds after Azure credentials have been validated, defaults to 60')
 parser.add('--cache', action='store_true', help='Cache/ use cached credentials')
 parser.add('--cache-file', help='Path and name to cache file, defaults to /tmp/{repo_name}_{workflow_name}.cache.json when running in atlantis, or /tmp/{current_workdir}.cache.json when running from shell')
 parser.add('--secret', action='store_true', help='Every key/value pair in vault applications "setenv" secret is added to env vars')
@@ -202,19 +203,46 @@ def _azure_get_token(tenant_id: str, client_id: str, client_secret: str) -> str:
         payload = json.load(resp)
     return payload["access_token"]
 
+def find_value_in_dict(d: dict, search_value: str) -> tuple[dict | None, str | None]:
+    if isinstance(d, dict):
+        for k, v in d.items():
+            if isinstance(v, dict):
+                result, matching_key = find_value_in_dict(v, search_value)
+                if result:
+                    return result, matching_key
+            elif isinstance(v, list):
+                for item in v:
+                    result, matching_key = find_value_in_dict(item, search_value)
+                    if result:
+                        return result, matching_key
+            elif search_value.lower() in v.lower():
+                return d, k
+    return None, None
+
 def azure_check_resource_group(tenant_id: str, subscription_id: str, resource_group: str, token: str) -> bool:
     url = (
         f"https://management.azure.com/subscriptions/{subscription_id}"
-        f"/resourcegroups?api-version=2021-04-01"
+        f"/providers/Microsoft.Storage/storageAccounts?api-version=2025-06-01"
     )
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=10):
-            return True
-    except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403, 404):
-            return False
-        raise
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.load(resp)
+            
+            result, matching_key = find_value_in_dict(payload, resource_group)
+            status(f"Azure resource group access check response contains key: {matching_key} with value {result[matching_key] if result and matching_key else 'None'}", args.debug, True)
+    except urllib.error.URLError as exc:
+        status(f"Azure resource group access check URL error: {exc.reason}", args.debug, True)
+        if isinstance(exc.reason, TimeoutError):
+          status("Azure resource group access check timed out", True)
+        return False
+    
+    if not result:
+        status(f"Azure resource group '{resource_group}' not found.", args.debug, True)
+        return False
+    
+    return True
+
 
 env_vars = []
 vault_token = ""
@@ -318,7 +346,7 @@ if args.azure:
             ])
         
         tries=0
-        status("Validating Azure credentials", False, False)
+        status("Validating Azure credentials", True, False)
         while True:
             token = _azure_get_token(
                 tenant_id=args.azure_tenant_id,
@@ -331,15 +359,16 @@ if args.azure:
                 resource_group=args.azure_resource_group,
                 token=token
             ):
-                status("Azure credentials are valid and resource group is accessible.")
+                status("Azure credentials are valid and resource group is accessible.", args.debug, True)
                 break
             else:
-                status(".", False, False)
+                status(f".", False, False)
                 tries += 1
                 if tries >= 60:
-                    status("\nAzure credentials did not propagate in time, exiting...", True)
+                    status("\nAzure credentials did not propagate in time, exiting...", args.debug, True)
                     break
                 time.sleep(5)
+        time.sleep(args.wait_time)
     
     except urllib.error.HTTPError as e:
         status(f"HTTP Error: {e.code} - {e.reason}", True)
