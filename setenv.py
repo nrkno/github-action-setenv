@@ -208,30 +208,6 @@ def _azure_get_token(tenant_id: str, client_id: str, client_secret: str) -> str:
         payload = json.load(resp)
     return payload["access_token"]
 
-def find_value_in_dict(d: dict, search_value: str) -> tuple[dict | None, str | None]:
-    if isinstance(d, dict):
-        for k, v in d.items():
-            if isinstance(v, dict):
-                result, matching_key = find_value_in_dict(v, search_value)
-                if result:
-                    return result, matching_key
-            elif isinstance(v, list):
-                for item in v:
-                    result, matching_key = find_value_in_dict(item, search_value)
-                    if result:
-                        return result, matching_key
-            elif isinstance(v, bool):
-                continue
-            elif isinstance(v, (int, float)):
-                if str(search_value) == str(v):
-                    return d, k
-            elif isinstance(v, str):
-                if search_value.lower() == v.lower():
-                    return d, k
-            else:
-                continue
-    return None, None
-
 def azure_check_resource_group(tenant_id: str, subscription_id: str, resource_group: str, token: str) -> bool:
     url = (
         f"https://management.azure.com/subscriptions/{subscription_id}"
@@ -241,21 +217,33 @@ def azure_check_resource_group(tenant_id: str, subscription_id: str, resource_gr
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             payload = json.load(resp)
+
+            # status(f"Azure resource group access check response: {json.dumps(payload)}", args.debug, True)
             
-            result, matching_key = find_value_in_dict(payload, resource_group)
-            status(f"Azure resource group access check response contains key: {matching_key} with value {result[matching_key] if result and matching_key else 'None'}", args.debug, True)
+            if "value" in payload:
+                if isinstance(payload["value"], list):
+                  for i, result in enumerate(payload["value"]):
+                      status(f"Checking resource group in id: {payload['value'][i]['id']}", args.debug, True)
+                      if resource_group.lower() in payload["value"][i]["id"].lower():
+                          status(f"Azure resource group '{resource_group}' found.", args.debug, True)
+                          return True
+                      else:
+                          status(f"Azure resource group '{resource_group}' not found in id: {payload['value'][i]['id']}", args.debug, True)
+                          return False
+                else:
+                    status(f"Azure resource group '{resource_group}' not found.", args.debug, True)
+                    return False
+            else:
+                status(f"no values in response", args.debug, True)
+                return False
+            
     except urllib.error.URLError as exc:
         status(f"Azure resource group access check URL error: {exc.reason}", args.debug, True)
         if isinstance(exc.reason, TimeoutError):
           status("Azure resource group access check timed out", True)
         return False
     
-    if not result:
-        status(f"Azure resource group '{resource_group}' not found.", args.debug, True)
-        return False
-    
-    return True
-
+    return False
 
 env_vars = []
 vault_token = ""
