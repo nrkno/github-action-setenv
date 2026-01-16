@@ -82,4 +82,4 @@ inputs:
 
 runs:
   using: "docker"
-  image: "docker://ghcr.io/nrkno/github-action-setenv:v3.0.2"
+  image: "docker://ghcr.io/nrkno/github-action-setenv:v3.0.5"
