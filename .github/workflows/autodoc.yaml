@@ -1,0 +1,18 @@
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  autodoc:
+    name: Auto-generated workflow documentation
+    uses: nrkno/github-workflow-action-workflow-autodoc/.github/workflows/workflow.yaml@v1
+    with:
+      runs-on: ubuntu-latest
+      workflow_file: action.yaml
+      doc_file: README.md
+      start_token: "<!-- autodoc start -->"
+      end_token: "<!-- autodoc end -->"
+      table: "true"
