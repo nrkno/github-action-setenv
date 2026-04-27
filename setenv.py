@@ -1,38 +1,110 @@
-#!/usr/bin/env python3
-import json
-import urllib.request
-import os
+#!env python3
+import argparse
+import csv
 import base64
-import configargparse
-import time
+import json
+import os
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta
 
-parser = configargparse.ArgParser(add_env_var_help=True, auto_env_var_prefix="INPUT_")
-parser.add('--name', required=True, metavar="my-terraform-config", help='Vault app_role_applications name')
-parser.add('--env', required=True, metavar="prod", help='Vault environment eg: prod')
-parser.add('--cluster', action='append', metavar="cluster:role:namespace", default=[], help='Can be used multiple times, exported in KUBE_CONFIG_PATH: ~/.kube/atlantis/config')
-parser.add('--azure', action='store_true', help='Get Azure credentials, exported as ARM_CLIENT_ID and ARM_CLIENT_SECRET')
-parser.add('--azure-tenant-id', help='Azure tenant ID. Required if --azure is set')
-parser.add('--azure-subscription-id', help='Azure subscription ID. Subscription ID for which your state is stored. Required if --azure is set')
-parser.add('--azure-resource-group', help='Azure resource group name. Resource group for which your state is stored. Required if --azure is set')
-parser.add('--azure-no-arm', action='store_true', help='Do not export ARM_CLIENT_ID and ARM_CLIENT_SECRET, only TF_VAR_azure_client_id and TF_VAR_azure_client_secret')
-parser.add('--gcp', action='append', metavar="my-project", default=[], help='GCP project names, creates TF_VAR_gcp_project_name for use in "credentials" in google provider')
-parser.add('--terraform-registry', action='store_true', help='Get Terraform registry token, expects to be found in vault under "token" in secret/applications/{name}/{env}/terraform-registry')
-parser.add('--eval', action='store_true', help='Output as export statements, for use with eval $()')
-parser.add('--new-line', action='store_true', help='Output as key=value separated by newline. If not set, output will be comma separated')
-parser.add('--debug', action='store_true', help='Print progress messages')
-parser.add('--token', help='Vault token, defaults to /vault/secrets/token')
-parser.add('--vault-role-id-name', default='TF_VAR_vault_role_id', help='Name of the environment variable for Vault role ID, defaults to "TF_VAR_vault_role_id"')
-parser.add('--vault-secret-id-name', default='TF_VAR_vault_secret_id', help='Name of the environment variable for Vault secret ID, defaults to "TF_VAR_vault_secret_id"')
-parser.add('--vault-secret-id-cidr', default=None, help='CIDR to use for Vault secret ID, defaults to the IP address from --myip-url with /32 suffix')
-parser.add('--wait-time', default='60', help='Time to wait in seconds after Azure credentials have been validated, defaults to 60')
-parser.add('--cache', action='store_true', help='Cache/ use cached credentials')
-parser.add('--cache-file', help='Path and name to cache file, defaults to /tmp/{repo_name}_{workflow_name}.cache.json when running in atlantis, or /tmp/{current_workdir}.cache.json when running from shell')
-parser.add('--secret', action='store_true', help='Every key/value pair in vault applications "setenv" secret is added to env vars')
-parser.add('--vault-secret', action='append',metavar="path:key:var_name", help='Get secret from vault, specify path to secret, key in secret and name of environment variable to export. Can be used multiple times, e.g. --vault-secret secret/applications/myapp/prod:mykey:MY_VAR_NAME. If using * as key, all keys in secret will be exported with the specified var_name as prefix, e.g.: --vault-secret secret/applications/myapp/prod:*:MY_PREFIX_ will export MY_PREFIX_key1, MY_PREFIX_key2 etc.')
-parser.add('--myip-url', default='http://icanhazip.com', help='URL to get current IP address, default is http://icanhazip.com')
-args = parser.parse_args()
+ENV_VAR_PREFIX = 'INPUT_'
+TRUTHY_VALUES = {'1', 'true', 'yes', 'on'}
+FALSY_VALUES = {'0', 'false', 'no', 'off', ''}
+
+
+def get_env_var_name(dest):
+    return f'{ENV_VAR_PREFIX}{dest.upper()}'
+
+
+def add_env_var_help(parser):
+    for action in parser._actions:
+        if not action.option_strings or action.dest == 'help':
+            continue
+
+        env_var_name = get_env_var_name(action.dest)
+        help_text = action.help or ''
+        if f'[env: {env_var_name}]' not in help_text:
+            action.help = f'{help_text} [env: {env_var_name}]'.strip()
+
+
+def parse_env_bool(action, raw_value):
+    normalized = raw_value.strip().lower()
+    if normalized in TRUTHY_VALUES:
+        return True
+    if normalized in FALSY_VALUES:
+        return False
+    raise ValueError(f'Invalid boolean value for {get_env_var_name(action.dest)}: {raw_value!r}')
+
+
+def parse_env_list(raw_value):
+    return [value for value in next(csv.reader([raw_value], skipinitialspace=True)) if value]
+
+
+def apply_env_defaults(parser):
+    for action in parser._actions:
+        if not action.option_strings or action.dest == 'help':
+            continue
+
+        raw_value = os.getenv(get_env_var_name(action.dest))
+        if raw_value is None:
+            continue
+
+        if isinstance(action, argparse._StoreTrueAction):
+            try:
+                action.default = parse_env_bool(action, raw_value)
+            except ValueError as exc:
+                parser.error(str(exc))
+            action.required = False
+            continue
+
+        if isinstance(action, argparse._AppendAction):
+            env_values = parse_env_list(raw_value)
+            if env_values:
+                default_values = list(action.default) if isinstance(action.default, list) else []
+                action.default = default_values + env_values
+                action.required = False
+            continue
+
+        if raw_value != '':
+            action.default = raw_value
+            action.required = False
+
+
+def build_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--name', required=True, metavar='my-terraform-config', help='Vault app_role_applications name')
+    parser.add_argument('--env', required=True, metavar='prod', help='Vault environment eg: prod')
+    parser.add_argument('--cluster', action='append', metavar='cluster:role:namespace', default=[], help='Can be used multiple times, exported in KUBE_CONFIG_PATH: ~/.kube/atlantis/config')
+    parser.add_argument('--azure', action='store_true', help='Get Azure credentials, exported as ARM_CLIENT_ID and ARM_CLIENT_SECRET')
+    parser.add_argument('--azure-tenant-id', help='Azure tenant ID. Required if --azure is set')
+    parser.add_argument('--azure-subscription-id', help='Azure subscription ID. Subscription ID for which your state is stored. Required if --azure is set')
+    parser.add_argument('--azure-resource-group', help='Azure resource group name. Resource group for which your state is stored. Required if --azure is set')
+    parser.add_argument('--azure-no-arm', action='store_true', help='Do not export ARM_CLIENT_ID and ARM_CLIENT_SECRET, only TF_VAR_azure_client_id and TF_VAR_azure_client_secret')
+    parser.add_argument('--gcp', action='append', metavar='my-project', default=[], help='GCP project names, creates TF_VAR_gcp_project_name for use in "credentials" in google provider')
+    parser.add_argument('--terraform-registry', action='store_true', help='Get Terraform registry token, expects to be found in vault under "token" in secret/applications/{name}/{env}/terraform-registry')
+    parser.add_argument('--eval', action='store_true', help='Output as export statements, for use with eval $()')
+    parser.add_argument('--new-line', action='store_true', help='Output as key=value separated by newline. If not set, output will be comma separated')
+    parser.add_argument('--debug', action='store_true', help='Print progress messages')
+    parser.add_argument('--token', help='Vault token, defaults to /vault/secrets/token')
+    parser.add_argument('--vault-role-id-name', default='TF_VAR_vault_role_id', help='Name of the environment variable for Vault role ID, defaults to "TF_VAR_vault_role_id"')
+    parser.add_argument('--vault-secret-id-name', default='TF_VAR_vault_secret_id', help='Name of the environment variable for Vault secret ID, defaults to "TF_VAR_vault_secret_id"')
+    parser.add_argument('--vault-secret-id-cidr', default=None, help='CIDR to use for Vault secret ID, defaults to the IP address from --myip-url with /32 suffix')
+    parser.add_argument('--wait-time', default='60', help='Time to wait in seconds after Azure credentials have been validated, defaults to 60')
+    parser.add_argument('--cache', action='store_true', help='Cache/ use cached credentials')
+    parser.add_argument('--cache-file', help='Path and name to cache file, defaults to /tmp/{repo_name}_{workflow_name}.cache.json when running in atlantis, or /tmp/{current_workdir}.cache.json when running from shell')
+    parser.add_argument('--secret', action='store_true', help='Every key/value pair in vault applications "setenv" secret is added to env vars')
+    parser.add_argument('--vault-secret', action='append', metavar='path:key:var_name', help='Get secret from vault, specify path to secret, key in secret and name of environment variable to export. Can be used multiple times, e.g. --vault-secret secret/applications/myapp/prod:mykey:MY_VAR_NAME. If using * as key, all keys in secret will be exported with the specified var_name as prefix, e.g.: --vault-secret secret/applications/myapp/prod:*:MY_PREFIX_ will export MY_PREFIX_key1, MY_PREFIX_key2 etc.')
+    parser.add_argument('--myip-url', default='http://icanhazip.com', help='URL to get current IP address, default is http://icanhazip.com')
+    add_env_var_help(parser)
+    apply_env_defaults(parser)
+    return parser
+
+
+args = build_parser().parse_args()
 
 vault_role = f"{args.name}-{args.env}"
 try:
@@ -46,8 +118,7 @@ def status(message, error=False, flush=False):
         print(message, file=sys.stderr, flush=flush)
 
 github_actions = False
-shell = False
-cache_path = None
+cache_path = ''
 
 VAULT_ADDR = os.getenv('VAULT_ADDR', 'http://127.0.0.1:8200')
 VAULT_TOKEN = ""
@@ -55,17 +126,14 @@ VAULT_TOKEN = ""
 if os.getenv('GITHUB_ACTIONS'):
     github_actions = True
 
-if args.token != None or args.token != "":
+if args.token not in (None, ''):
     status("Using --token as vault token", False)
-    shell=True
     VAULT_TOKEN = args.token
 elif os.getenv('VAULT_TOKEN'):
     status("Using VAULT_TOKEN environment variable as vault token", False)
-    VAULT_TOKEN = os.getenv('VAULT_TOKEN')
-    shell=True
+    VAULT_TOKEN = os.getenv('VAULT_TOKEN') or ''
 elif os.path.exists('/vault/secrets/token'):
     status("Using /vault/secrets/token as vault token", False)
-    shell=True
     with open('/vault/secrets/token', 'r') as f:
         VAULT_TOKEN = f.read().strip()
 

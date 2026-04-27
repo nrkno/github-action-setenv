@@ -1,0 +1,7 @@
+[project]
+name = "github-action-setenv"
+version = "0.1.0"
+description = "Script to set environment variables in GitHub Actions workflow"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
