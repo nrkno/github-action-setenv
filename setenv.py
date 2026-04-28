@@ -417,12 +417,27 @@ if args.azure:
         tries=0
         status("Validating Azure credentials", True, False)
         while True:
-            token = _azure_get_token(
-                tenant_id=args.azure_tenant_id,
-                client_id=azure_creds['client_id'],
-                client_secret=azure_creds['client_secret']
-            )
-            if azure_check_resource_group(
+            token = None
+            try:
+                token = _azure_get_token(
+                    tenant_id=args.azure_tenant_id,
+                    client_id=azure_creds['client_id'],
+                    client_secret=azure_creds['client_secret']
+                )
+            except urllib.error.HTTPError as token_err:
+                # Freshly created Azure SP credentials take time to propagate
+                # through Azure AD. A 401 here is expected during that window;
+                # retry until the credentials become usable.
+                body = ''
+                try:
+                    body = token_err.read().decode()
+                except Exception:
+                    pass
+                status(f"Azure token request returned {token_err.code} - {token_err.reason}: {body}", args.debug, True)
+            except urllib.error.URLError as token_err:
+                status(f"Azure token request URL error: {token_err.reason}", args.debug, True)
+
+            if token and azure_check_resource_group(
                 tenant_id=args.azure_tenant_id,
                 subscription_id=args.azure_subscription_id,
                 resource_group=args.azure_resource_group,
