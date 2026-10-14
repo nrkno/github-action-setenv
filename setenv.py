@@ -141,21 +141,21 @@ def get_cache_filename():
     # If cache file is specified, use it
     if args.cache_file:
         return args.cache_file
-    
+
     # When running from shell, use current workdir
     if args.token:
         return f'/tmp/{os.getcwd().split("/")[-1]}.cache.json'
-        
+
     path_parts = os.getcwd().split("/")
     if not len(path_parts) >= 3:
         status("Could not generate cache filename, exiting...", True)
         sys.exit(0)
-        
+
     # When running in atlantis, use repo and workflow name
     return f"/tmp/{path_parts[-3]}_{path_parts[-2]}.cache.json"
 
 cache_path = get_cache_filename()
-status(f"Setting {cache_path} as cache path") 
+status(f"Setting {cache_path} as cache path")
 
 
 def get_credentials_cache():
@@ -198,7 +198,7 @@ def set_credentials_cache(env_vars=None):
         except Exception as e:
             status(f"Error saving cache: {str(e)}", True)
             return None
-        
+
 def output_env_vars(env_vars):
     """Output environment variables in the specified format"""
     if args.eval:
@@ -287,7 +287,7 @@ def azure_check_resource_group(tenant_id: str, subscription_id: str, resource_gr
             payload = json.load(resp)
 
             # status(f"Azure resource group access check response: {json.dumps(payload)}", args.debug, True)
-            
+
             if "value" in payload:
                 if isinstance(payload["value"], list):
                   for i, result in enumerate(payload["value"]):
@@ -304,13 +304,13 @@ def azure_check_resource_group(tenant_id: str, subscription_id: str, resource_gr
             else:
                 status(f"no values in response", args.debug, True)
                 return False
-            
+
     except urllib.error.URLError as exc:
         status(f"Azure resource group access check URL error: {exc.reason}", args.debug, True)
         if isinstance(exc.reason, TimeoutError):
           status("Azure resource group access check timed out", True)
         return False
-    
+
     return False
 
 env_vars = []
@@ -366,7 +366,7 @@ if args.cluster:
     for cluster_str in args.cluster:
         if cluster_str == "None" or cluster_str == "":
             continue
-        
+
         clusters += 1
         status(f"Getting Kubernetes credentials for {cluster_str}...")
         cluster, role, namespace = cluster_str.split(':')
@@ -413,7 +413,7 @@ if args.azure:
                 ("ARM_CLIENT_ID", azure_creds['client_id']),
                 ("ARM_CLIENT_SECRET", azure_creds['client_secret'])
             ])
-        
+
         tries=0
         status("Validating Azure credentials", True, False)
         while True:
@@ -452,8 +452,9 @@ if args.azure:
                     status("\nAzure credentials did not propagate in time, exiting...", args.debug, True)
                     break
                 time.sleep(5)
+        status(f"sleeping for {wait_time} seconds", args.debug, True)
         time.sleep(wait_time)
-    
+
     except urllib.error.HTTPError as e:
         status(f"HTTP Error: {e.code} - {e.reason}", True)
         status(f"Error response body: {e.read().decode()}", True)
@@ -485,26 +486,26 @@ if args.vault_secret:
     for vault_secret in args.vault_secret:
         if vault_secret == "None" or vault_secret == "":
             continue
-        
+
         path, key, var_name = vault_secret.split(':')
         if key == '*':
             status(f"Fetching all keys from secret at {path}...")
             var_name = var_name or 'VAULT_SECRET_'
-            
+
             secret_data = vault_request(path)
             for k, v in secret_data['data'].items():
                 status(f"Adding key '{var_name}{k}' to environment variables...")
                 env_vars.append((f"{var_name}{k}", v))
-        
+
         else:
             status(f"Fetching key '{key}' from secret at {path}...")
             var_name = var_name or 'VAULT_SECRET'
-        
+
         secret_data = vault_request(path)
         if key not in secret_data['data']:
             status(f"Key '{key}' not found in secret at {path}", True)
             continue
-        
+
         env_vars.append((var_name, secret_data['data'][key]))
 
 set_credentials_cache(env_vars)
