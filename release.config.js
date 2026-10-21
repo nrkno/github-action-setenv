@@ -17,5 +17,6 @@ module.exports = {
     ],
     ["@semantic-release/github"],
     ["semantic-release-tags"],
+    ["conventional-changelog-writer"]
   ],
 };
