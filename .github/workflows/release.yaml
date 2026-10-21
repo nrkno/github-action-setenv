@@ -30,7 +30,7 @@ jobs:
           node-version: "lts/*"
 
       - name: Install dependencies
-        run: npm install --save-dev semantic-release @semantic-release/git @semantic-release/github @semantic-release/commit-analyzer @semantic-release/release-notes-generator conventional-changelog-conventionalcommits semantic-release-tags
+        run: npm install --save-dev semantic-release @semantic-release/git @semantic-release/github @semantic-release/commit-analyzer @semantic-release/release-notes-generator conventional-changelog-conventionalcommits@9.3.1 semantic-release-tags
 
       - name: Run Semantic Release
         id: semantic-release
