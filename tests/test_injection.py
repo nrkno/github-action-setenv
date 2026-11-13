@@ -99,7 +99,7 @@ class SetenvInjectionTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.server.shutdown()
 
-    def run_action(self, secrets_data, via_entrypoint=True, **extra_env):
+    def run_action(self, secrets_data, **extra_env):
         FakeVault.setenv_data = secrets_data
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -123,7 +123,7 @@ class SetenvInjectionTest(unittest.TestCase):
             'INPUT_MYIP_URL': f'http://127.0.0.1:{self.port}/ip',
         }
         env.update(extra_env)
-        cmd = ['bash', str(ROOT / 'entrypoint.sh')] if via_entrypoint else [sys.executable, str(ROOT / 'setenv.py')]
+        cmd = [sys.executable, str(ROOT / 'setenv.py')]
         proc = subprocess.run(cmd, env=env, capture_output=True, text=True, cwd=t, timeout=60)
         return proc, parse_file_commands(env_file.read_text()), parse_file_commands(out_file.read_text()), t
 
@@ -265,7 +265,7 @@ class SetenvInjectionTest(unittest.TestCase):
         self.addCleanup(lambda: marker.unlink(missing_ok=True))
         value = f"a'$(touch {marker})`id`\nBASH_ENV=1"
         proc, _, _, t = self.run_action({'MY_SECRET': value},
-                                        via_entrypoint=False, GITHUB_ACTIONS='', INPUT_EVAL='true', INPUT_NEW_LINE='true')
+                                        GITHUB_ACTIONS='', INPUT_EVAL='true', INPUT_NEW_LINE='true')
         self.assertEqual(proc.returncode, 0, proc.stderr)
         check = subprocess.run(['bash', '-c', f'eval "$({sys.executable} {ROOT}/setenv.py)"; printf %s "$MY_SECRET"'],
                                env={**os.environ, 'HOME': str(t), 'VAULT_ADDR': f'http://127.0.0.1:{self.port}',
@@ -276,9 +276,24 @@ class SetenvInjectionTest(unittest.TestCase):
         self.assertEqual(check.stdout, value)
         self.assertFalse(marker.exists())
 
-    def test_entrypoint_never_evals(self):
-        code = [l for l in (ROOT / 'entrypoint.sh').read_text().splitlines() if not l.lstrip().startswith('#')]
-        self.assertFalse([l for l in code if 'eval' in l.split()], code)
+    def test_dockerfile_needs_only_the_pinned_base_image(self):
+        text = (ROOT / 'Dockerfile').read_text()
+        self.assertIn('@sha256:', text.splitlines()[0])
+        self.assertNotIn('apk', text)
+        self.assertIn('ENTRYPOINT ["python3", "/setenv.py"]', text)
+        self.assertFalse((ROOT / 'entrypoint.sh').exists())
+
+    def test_non_identifier_names_are_fine_in_github_actions_without_eval(self):
+        proc, env, out, _ = self.run_action({'my-key': 'v', 'a.b': 'w'}, INPUT_EVAL='false')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((env, out), ({}, {}))
+        for line in proc.stdout.splitlines():
+            self.assertTrue(line.startswith('::add-mask::'), line)
+
+    def test_non_identifier_names_are_refused_when_shell_is_printed(self):
+        proc, _, _, _ = self.run_action({'my-key': 'v'}, GITHUB_ACTIONS='', INPUT_EVAL='true')
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn('my-key=', proc.stdout)
 
 
 if __name__ == '__main__':

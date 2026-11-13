@@ -252,7 +252,7 @@ def validate_env_vars(env_vars):
         if reason:
             status(f"Refusing to export variable with {reason} name {k!r}", True)
             sys.exit(1)
-        if not (github_actions and args.eval) and not SHELL_NAME.match(k):
+        if not github_actions and not SHELL_NAME.match(k):
             status(f"Refusing to print shell assignment for non-identifier name {k!r}", True)
             sys.exit(1)
         checked.append((k, str(v)))
