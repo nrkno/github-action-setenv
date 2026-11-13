@@ -195,6 +195,7 @@ class SetenvInjectionTest(unittest.TestCase):
         'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY',
         'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE',
         'TF_CLI_ARGS', 'TF_CLI_ARGS_plan', 'TF_CLI_CONFIG_FILE', 'KUBECONFIG',
+        'TERRAFORM_CONFIG', 'TF_PLUGIN_CACHE_DIR', 'TF_DATA_DIR', 'VAULT_ADDR',
         'PIP_INDEX_URL', 'PIP_EXTRA_INDEX_URL', 'NPM_CONFIG_REGISTRY', 'npm_config_registry',
     ]
     INVALID_NAMES = ['', 'A=B', 'X\nBASH_ENV', 'X\rY', 'a<<b']

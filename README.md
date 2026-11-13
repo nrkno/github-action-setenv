@@ -134,7 +134,7 @@ jobs:
 - **Variable names are checked, not allow-listed.** A name is refused (the action exits non-zero, no variable is written) if it is empty, contains `=`, CR, LF, NUL or `<<`, or matches the deny list below. Hyphens, dots and lowercase names are accepted. The deny list is case-sensitive except where noted.
   - Shell and loader: `BASH_*`, `ENV`, `PATH`, `IFS`, `SHELL`, `HOME`, `PS4`, `PROMPT_COMMAND`, `LD_*`, `DYLD_*`, `GCONV_PATH`, `LESSOPEN`, `LESSCLOSE`.
   - Language runtimes: `PYTHON*`, `NODE_OPTIONS`, `NODE_PATH`, `NODE_EXTRA_CA_CERTS`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`.
-  - Tools: all `GIT_*` (including `GIT_CONFIG_*`), `TF_CLI_ARGS*`, `TF_CLI_CONFIG_FILE`, `KUBECONFIG`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`.
+  - Tools: all `GIT_*` (including `GIT_CONFIG_*`), `TF_CLI_ARGS*`, `TF_CLI_CONFIG_FILE`, `TERRAFORM_CONFIG`, `TF_PLUGIN_CACHE_DIR`, `TF_DATA_DIR`, `KUBECONFIG`, `VAULT_ADDR`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`.
   - TLS and proxies: `SSL_CERT_FILE`, `SSL_CERT_DIR`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, and in any letter case `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, `FTP_PROXY`, `NPM_CONFIG_*`.
   - Runner: `GITHUB_*`, `RUNNER_*`, `ACTIONS_*`.
 
