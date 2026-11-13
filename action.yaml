@@ -44,10 +44,10 @@ inputs:
     description: 'Get Terraform registry token, expects to be found in vault under "token" in secret/applications/{name}/{env}/terraform-registry'
     required: false
   wait_time:
-    description: "Do not wait for credentials to propagate"
+    description: "Time to wait in seconds after Azure credentials have been validated, defaults to 60"
     required: false
   eval:
-    description: "Output as export statements, for use with eval $()"
+    description: "Export the variables to GITHUB_ENV and GITHUB_OUTPUT (in GitHub Actions) or print export statements (elsewhere)"
     required: false
   new_line:
     description: "Output as text separated by newline"
@@ -62,14 +62,14 @@ inputs:
     description: 'Name of the environment variable for Vault secret ID, defaults to "TF_VAR_vault_secret_id"'
     required: false
   vault_secret_id_cidr:
-    description: "CIDR to use for Vault secret ID, defaults to the IP address from --myip-url with /32 suffix"
+    description: "CIDR to use for Vault secret ID, defaults to the IP address from --myip-url with /32 (IPv4) or /128 (IPv6) suffix"
     required: false
   cache:
     description: "Cache/ use cached credentials"
     required: false
   cache_file:
     description: "Path and name to cache file, defaults to /tmp/{repo_name}_{workflow_name}.cache.json when running in atlantis, or /tmp/{current_workdir}.cache.json when running from shell"
-    required: true
+    required: false
   secret:
     description: 'Every key/value pair in vault applications "setenv" secret is added to env vars on hardcoded path secret/applications/{name}/{env}/setenv'
     required: false
@@ -77,7 +77,7 @@ inputs:
     description: "Get secret from vault, spec path to secret, key in secret and name of environment variable to export. Can be used multiple times, e.g. --vault-secret secret/applications/myapp/prod:mykey:MY_VAR_NAME. using * as key, all keys in secret will be exported with the speced var_name as prefix, e.g.: --vault-secret secret/applications/myapp/prod:*:MY_PREFIX_ will export MY_PREFIX_key1, MY_PREFIX_key2 etc."
     required: false
   myip_url:
-    description: "URL to get current IP address, default is http://icanhazip.com"
+    description: "URL to get current IP address, default is https://icanhazip.com"
     required: false
 
 runs:
