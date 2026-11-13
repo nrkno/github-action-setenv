@@ -1,9 +1,29 @@
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   commitlint:
-    uses: nrkno/github-workflow-semantic-release/.github/workflows/workflow.yaml@v4
+    # The called workflow declares contents: write / pull-requests: read on its (here disabled)
+    # release job. A caller must grant at least that, or the run fails at startup.
+    permissions:
+      contents: write
+      pull-requests: read
+    # v5.1.5. The hardened version of this workflow is not released yet; re-pin when it is.
+    uses: nrkno/github-workflow-semantic-release/.github/workflows/workflow.yaml@6a8585e39eabcb53cdbdebfcc76eb9672199089e
     with:
-      runs-on: ubuntu-22.04
+      runs-on: ubuntu-24.04
       release-enabled: false
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run injection tests
+        run: python3 -I -m unittest discover -s tests -v
