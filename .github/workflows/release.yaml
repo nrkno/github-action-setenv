@@ -6,29 +6,26 @@ on:
     branches:
       - main
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
-# Nothing is granted by default; each job asks for what it needs.
+# Nothing is granted by default; the job asks for what it needs.
 permissions: {}
 
 jobs:
-  # Runs the npm toolchain. Holds no package-write permission, so a compromised npm
-  # package cannot publish the container image.
+  # action.yaml uses `image: Dockerfile`, so the image is built from the action ref when a
+  # consumer runs it. There is no image to publish and no job holds packages: write.
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
       pull-requests: write
-    outputs:
-      tags: ${{ steps.semantic-release.outputs.tags }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # Credentials must stay in .git/config: semantic-release-tags runs a plain
+        # `git push origin <tag> --force` that does not use GITHUB_TOKEN from the environment.
+        # The token is scoped to this job (contents/issues/pull-requests write only).
         with:
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -39,44 +36,6 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Run Semantic Release
-        id: semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-        run: |
-          npx semantic-release
-          TAGS=$(git tag --points-at HEAD | sed "s|^|${REGISTRY}/${IMAGE_NAME}:|" | xargs | sed 's/ /,/g')
-          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
-
-  # Builds and publishes the image from the commit that was released. No npm code runs here.
-  image:
-    needs: release
-    if: needs.release.outputs.tags != ''
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          push: true
-          tags: ${{ needs.release.outputs.tags }}
+        run: npx semantic-release
