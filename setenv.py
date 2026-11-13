@@ -2,8 +2,12 @@
 import argparse
 import csv
 import base64
+import ipaddress
 import json
 import os
+import re
+import secrets
+import shlex
 import sys
 import time
 import urllib.error
@@ -92,13 +96,13 @@ def build_parser():
     parser.add_argument('--token', help='Vault token, defaults to /vault/secrets/token')
     parser.add_argument('--vault-role-id-name', default='TF_VAR_vault_role_id', help='Name of the environment variable for Vault role ID, defaults to "TF_VAR_vault_role_id"')
     parser.add_argument('--vault-secret-id-name', default='TF_VAR_vault_secret_id', help='Name of the environment variable for Vault secret ID, defaults to "TF_VAR_vault_secret_id"')
-    parser.add_argument('--vault-secret-id-cidr', default=None, help='CIDR to use for Vault secret ID, defaults to the IP address from --myip-url with /32 suffix')
+    parser.add_argument('--vault-secret-id-cidr', default=None, help='CIDR to use for Vault secret ID, defaults to the IP address from --myip-url with /32 (IPv4) or /128 (IPv6) suffix')
     parser.add_argument('--wait-time', default='60', help='Time to wait in seconds after Azure credentials have been validated, defaults to 60')
     parser.add_argument('--cache', action='store_true', help='Cache/ use cached credentials')
     parser.add_argument('--cache-file', help='Path and name to cache file, defaults to /tmp/{repo_name}_{workflow_name}.cache.json when running in atlantis, or /tmp/{current_workdir}.cache.json when running from shell')
     parser.add_argument('--secret', action='store_true', help='Every key/value pair in vault applications "setenv" secret is added to env vars')
     parser.add_argument('--vault-secret', action='append', metavar='path:key:var_name', help='Get secret from vault, specify path to secret, key in secret and name of environment variable to export. Can be used multiple times, e.g. --vault-secret secret/applications/myapp/prod:mykey:MY_VAR_NAME. If using * as key, all keys in secret will be exported with the specified var_name as prefix, e.g.: --vault-secret secret/applications/myapp/prod:*:MY_PREFIX_ will export MY_PREFIX_key1, MY_PREFIX_key2 etc.')
-    parser.add_argument('--myip-url', default='http://icanhazip.com', help='URL to get current IP address, default is http://icanhazip.com')
+    parser.add_argument('--myip-url', default='https://icanhazip.com', help='URL to get current IP address, default is https://icanhazip.com')
     add_env_var_help(parser)
     apply_env_defaults(parser)
     return parser
@@ -187,8 +191,8 @@ def set_credentials_cache(env_vars=None):
     if env_vars is not None:
         try:
             # Write file with restricted permissions (only owner can read/write)
-            with open(cache_path, 'w') as f:
-                os.chmod(cache_path, 0o600)  # Set permissions to 600
+            fd = os.open(cache_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'w') as f:
                 json.dump({
                     'timestamp': datetime.now().isoformat(),
                     'env_vars': env_vars
@@ -199,40 +203,105 @@ def set_credentials_cache(env_vars=None):
             status(f"Error saving cache: {str(e)}", True)
             return None
 
+VALID_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+# Names that change how the runner or later steps execute code. Secret-supplied keys must never set them.
+DENIED_NAME = re.compile(
+    r'^(?:BASH_.*|ENV|LD_.*|DYLD_.*|NODE_OPTIONS|NODE_PATH|PATH|PYTHON.*|PS4|PROMPT_COMMAND|IFS|SHELL|HOME'
+    r'|GITHUB_.*|RUNNER_.*|ACTIONS_.*)$',
+    re.IGNORECASE,
+)
+
+
+def validate_env_vars(env_vars):
+    """Return env_vars as (name, str) pairs, or exit non-zero if any name is unsafe. Values are never logged."""
+    checked = []
+    for k, v in env_vars:
+        if not isinstance(k, str) or not VALID_NAME.match(k):
+            status(f"Refusing to export variable with invalid name {k!r}", True)
+            sys.exit(1)
+        if DENIED_NAME.match(k):
+            status(f"Refusing to export variable with reserved name {k!r}", True)
+            sys.exit(1)
+        checked.append((k, str(v)))
+    return checked
+
+
+def new_delimiter(value):
+    while True:
+        delimiter = f"ghadelim_{secrets.token_hex(16)}"
+        if delimiter not in value:
+            return delimiter
+
+
+def append_file_command(path, name, value):
+    """Append name=value to a GITHUB_ENV/GITHUB_OUTPUT file using a random heredoc delimiter."""
+    delimiter = new_delimiter(value)
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write(f"{name}<<{delimiter}\n{value}\n{delimiter}\n")
+
+
+def mask_value(value):
+    """Mask every line of a (possibly multi-line) value. Each line is printed as a literal workflow command."""
+    for line in value.replace('\r\n', '\n').split('\n'):
+        if line.strip():
+            print(f"::add-mask::{line}", flush=True)
+
+
 def output_env_vars(env_vars):
-    """Output environment variables in the specified format"""
-    if args.eval:
-        if github_actions:
-            status("Outputting environment variables for GitHub Actions...")
-            for k, v in env_vars:
-                status(f"{k} is available as output")
-                print(f'echo "::add-mask::{v}"')
-                print(f'echo "{k}={v}" >> $GITHUB_OUTPUT')
-                print(f'echo "{k}={v}" >> $GITHUB_ENV')
-        else:
-            status("Outputting environment variables for eval...")
-            print(*[f"{'export ' if args.eval else ''}{k}='{v}'" for k, v in env_vars], sep='\n' if args.new_line else ' ')
+    """Output environment variables in the specified format. Never emits code that is meant to be eval'd in GitHub Actions."""
+    env_vars = validate_env_vars(env_vars)
+
+    if github_actions and args.eval:
+        status("Outputting environment variables for GitHub Actions...")
+        env_file = os.environ.get('GITHUB_ENV')
+        output_file = os.environ.get('GITHUB_OUTPUT')
+        if not env_file or not output_file:
+            status("GITHUB_ENV and GITHUB_OUTPUT must be set when running in GitHub Actions", True)
+            sys.exit(1)
+        if not env_vars:
+            status("No variables set. Exiting.", True)
+            sys.exit(1)
+        for k, v in env_vars:
+            status(f"{k} is available as output")
+            mask_value(v)
+            append_file_command(output_file, k, v)
+            append_file_command(env_file, k, v)
+    elif github_actions:
+        # Without eval there is nothing to hand to the job. Values must not reach the log, so mask and print nothing else.
+        if not env_vars:
+            status("No variables set. Exiting.", True)
+            sys.exit(1)
+        for _, v in env_vars:
+            mask_value(v)
+    elif args.eval:
+        status("Outputting environment variables for eval...")
+        print(*[f"export {k}={shlex.quote(v)}" for k, v in env_vars], sep='\n' if args.new_line else ' ')
     else:
         status("Outputting environment variables...")
-        print(*[f"{k}='{v}'" for k, v in env_vars], sep='\n' if args.new_line else ',')
+        print(*[f"{k}={shlex.quote(v)}" for k, v in env_vars], sep='\n' if args.new_line else ',')
 
     sys.exit(0)
 
 def get_my_ip():
     """Get current IP address from specified URL"""
     try:
-        with urllib.request.urlopen(args.myip_url) as response:
+        with urllib.request.urlopen(args.myip_url, timeout=10) as response:
             ip = response.read().decode().strip()
-            return ip
     except Exception as e:
         status(f"Error getting IP address from {args.myip_url}: {str(e)}", True)
         sys.exit(1)
+    try:
+        parsed = ipaddress.ip_address(ip)
+    except ValueError:
+        status(f"Response from {args.myip_url} is not an IP address, exiting...", True)
+        sys.exit(1)
+    return f"{parsed}/{parsed.max_prefixlen}"
 
 if args.vault_secret_id_cidr and args.vault_secret_id_cidr != "":
     my_ip = args.vault_secret_id_cidr
     status(f"Using --vault-secret-id-cidr {my_ip} as CIDR for secret ID", False)
 else:
-    my_ip = f"{get_my_ip()}/32"
+    my_ip = get_my_ip()
     status(f"Using {my_ip} as CIDR for secret ID", False)
 
 cached_env_vars = get_credentials_cache()
@@ -496,6 +565,7 @@ if args.vault_secret:
             for k, v in secret_data['data'].items():
                 status(f"Adding key '{var_name}{k}' to environment variables...")
                 env_vars.append((f"{var_name}{k}", v))
+            continue
 
         else:
             status(f"Fetching key '{key}' from secret at {path}...")
