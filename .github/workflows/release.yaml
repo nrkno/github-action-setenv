@@ -20,7 +20,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v7.0.1
         # Credentials must stay in .git/config: semantic-release-tags runs a plain
         # `git push origin <tag> --force` that does not use GITHUB_TOKEN from the environment.
         # The token is scoped to this job (contents/issues/pull-requests write only).
@@ -28,7 +28,7 @@ jobs:
           persist-credentials: true
 
       - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        uses: actions/setup-node@v7.1.0
         with:
           node-version: "lts/*"
 
