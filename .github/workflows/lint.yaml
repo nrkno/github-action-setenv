@@ -12,7 +12,7 @@ jobs:
       contents: write
       pull-requests: read
     # v5.1.5. The hardened version of this workflow is not released yet; re-pin when it is.
-    uses: nrkno/github-workflow-semantic-release/.github/workflows/workflow.yaml@6a8585e39eabcb53cdbdebfcc76eb9672199089e
+    uses: nrkno/github-workflow-semantic-release/.github/workflows/workflow.yaml@6a8585e39eabcb53cdbdebfcc76eb9672199089e # v5.1.5
     with:
       runs-on: ubuntu-24.04
       release-enabled: false
