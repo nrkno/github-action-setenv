@@ -110,6 +110,16 @@ def build_parser():
 
 args = build_parser().parse_args()
 
+if args.azure:
+    missing = [flag for flag, value in (
+        ('--azure-tenant-id', args.azure_tenant_id),
+        ('--azure-subscription-id', args.azure_subscription_id),
+        ('--azure-resource-group', args.azure_resource_group),
+    ) if not (value or '').strip()]
+    if missing:
+        print(f"azure is enabled but {', '.join(missing)} is empty; all of them are required with --azure", file=sys.stderr)
+        sys.exit(1)
+
 vault_role = f"{args.name}-{args.env}"
 try:
     wait_time = float(args.wait_time)
@@ -203,24 +213,47 @@ def set_credentials_cache(env_vars=None):
             status(f"Error saving cache: {str(e)}", True)
             return None
 
-VALID_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-# Names that change how the runner or later steps execute code. Secret-supplied keys must never set them.
+# GITHUB_ENV / GITHUB_OUTPUT accept any name that is non-empty and contains no '=', CR, LF or NUL.
+# '<<' is also refused because the runner would split a heredoc header there.
+SHELL_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+# Names that make later steps run code, load config, or redirect traffic. Case-sensitive, like the OS.
 DENIED_NAME = re.compile(
-    r'^(?:BASH_.*|ENV|LD_.*|DYLD_.*|NODE_OPTIONS|NODE_PATH|PATH|PYTHON.*|PS4|PROMPT_COMMAND|IFS|SHELL|HOME'
-    r'|GITHUB_.*|RUNNER_.*|ACTIONS_.*)$',
-    re.IGNORECASE,
+    r'^(?:'
+    r'BASH_.*|ENV|PATH|IFS|SHELL|HOME|PS4|PROMPT_COMMAND'
+    r'|LD_.*|DYLD_.*|GCONV_PATH|LESSOPEN|LESSCLOSE'
+    r'|GIT_.*'
+    r'|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|JDK_JAVA_OPTIONS'
+    r'|PERL5OPT|PERL5LIB|RUBYOPT|RUBYLIB|PYTHON.*'
+    r'|NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS'
+    r'|SSL_CERT_FILE|SSL_CERT_DIR|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE'
+    r'|TF_CLI_ARGS.*|TF_CLI_CONFIG_FILE|KUBECONFIG'
+    r'|PIP_INDEX_URL|PIP_EXTRA_INDEX_URL'
+    r'|GITHUB_.*|RUNNER_.*|ACTIONS_.*'
+    r')$'
 )
+# Tools read these in any letter case.
+DENIED_NAME_ANY_CASE = re.compile(r'^(?:(?:HTTP|HTTPS|ALL|NO|FTP)_PROXY|NPM_CONFIG_.*)$', re.IGNORECASE)
+
+
+def invalid_name_reason(name):
+    if not isinstance(name, str) or name == '' or any(c in name for c in '=\r\n\0') or '<<' in name:
+        return 'invalid'
+    if DENIED_NAME.match(name) or DENIED_NAME_ANY_CASE.match(name):
+        return 'reserved'
+    return None
 
 
 def validate_env_vars(env_vars):
     """Return env_vars as (name, str) pairs, or exit non-zero if any name is unsafe. Values are never logged."""
     checked = []
     for k, v in env_vars:
-        if not isinstance(k, str) or not VALID_NAME.match(k):
-            status(f"Refusing to export variable with invalid name {k!r}", True)
+        reason = invalid_name_reason(k)
+        if reason:
+            status(f"Refusing to export variable with {reason} name {k!r}", True)
             sys.exit(1)
-        if DENIED_NAME.match(k):
-            status(f"Refusing to export variable with reserved name {k!r}", True)
+        if not (github_actions and args.eval) and not SHELL_NAME.match(k):
+            status(f"Refusing to print shell assignment for non-identifier name {k!r}", True)
             sys.exit(1)
         checked.append((k, str(v)))
     return checked
@@ -359,14 +392,17 @@ def azure_check_resource_group(tenant_id: str, subscription_id: str, resource_gr
 
             if "value" in payload:
                 if isinstance(payload["value"], list):
-                  for i, result in enumerate(payload["value"]):
-                      status(f"Checking resource group in id: {payload['value'][i]['id']}", args.debug, True)
-                      if resource_group.lower() in payload["value"][i]["id"].lower():
-                          status(f"Azure resource group '{resource_group}' found.", args.debug, True)
-                          return True
-                      else:
-                          status(f"Azure resource group '{resource_group}' not found in id: {payload['value'][i]['id']}", args.debug, True)
-                          return False
+                    found = False
+                    for entry in payload["value"]:
+                        status(f"Checking resource group in id: {entry['id']}", args.debug, True)
+                        if resource_group.lower() in entry["id"].lower():
+                            found = True
+                            break
+                    if found:
+                        status(f"Azure resource group '{resource_group}' found.", args.debug, True)
+                    else:
+                        status(f"Azure resource group '{resource_group}' not found in any storage account id.", args.debug, True)
+                    return found
                 else:
                     status(f"Azure resource group '{resource_group}' not found.", args.debug, True)
                     return False
@@ -423,7 +459,6 @@ try:
 
 except urllib.error.HTTPError as e:
     status(f"HTTP Error: {e.code} - {e.reason}", True)
-    status(f"Error response body: {e.read().decode()}", True)
     sys.exit(1)
 
 
@@ -464,9 +499,11 @@ if args.cluster:
 
     if clusters > 0:
       kubeconfig_path = os.path.expanduser('~/.kube/atlantis/config')
-      os.makedirs(os.path.dirname(kubeconfig_path), exist_ok=True)
-      with open(kubeconfig_path, 'w') as f:
+      os.makedirs(os.path.dirname(kubeconfig_path), mode=0o700, exist_ok=True)
+      fd = os.open(kubeconfig_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+      with os.fdopen(fd, 'w') as f:
           json.dump(kubeconfig, f, indent=2)
+      os.chmod(kubeconfig_path, 0o600)
       env_vars.append(("KUBE_CONFIG_PATH", kubeconfig_path))
 
 if args.azure:
@@ -497,12 +534,7 @@ if args.azure:
                 # Freshly created Azure SP credentials take time to propagate
                 # through Azure AD. A 401 here is expected during that window;
                 # retry until the credentials become usable.
-                body = ''
-                try:
-                    body = token_err.read().decode()
-                except Exception:
-                    pass
-                status(f"Azure token request returned {token_err.code} - {token_err.reason}: {body}", args.debug, True)
+                status(f"Azure token request returned {token_err.code} - {token_err.reason}", args.debug, True)
             except urllib.error.URLError as token_err:
                 status(f"Azure token request URL error: {token_err.reason}", args.debug, True)
 
@@ -518,15 +550,14 @@ if args.azure:
                 status(f".", False, False)
                 tries += 1
                 if tries >= 60:
-                    status("\nAzure credentials did not propagate in time, exiting...", args.debug, True)
-                    break
+                    status("\nAzure credentials did not propagate or the resource group was not found in time, exiting...", True)
+                    sys.exit(1)
                 time.sleep(5)
         status(f"sleeping for {wait_time} seconds", args.debug, True)
         time.sleep(wait_time)
 
     except urllib.error.HTTPError as e:
         status(f"HTTP Error: {e.code} - {e.reason}", True)
-        status(f"Error response body: {e.read().decode()}", True)
         sys.exit(1)
 
 if args.gcp:

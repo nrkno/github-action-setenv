@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class FakeVault(BaseHTTPRequestHandler):
     setenv_data = {}
+    error_body = None
 
     def log_message(self, *a):
         pass
@@ -45,6 +46,13 @@ class FakeVault(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_PUT(self):
+        if self.error_body:
+            data = self.error_body.encode()
+            self.send_response(403)
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         self.rfile.read(int(self.headers.get('Content-Length') or 0))
         if self.path.endswith('/secret-id'):
             self._send({'wrap_info': {'token': 'wrap'}})
@@ -176,13 +184,55 @@ class SetenvInjectionTest(unittest.TestCase):
         self.assertNotIn('BASH_ENV', out)
         self.assertNotIn('/tmp/evil.sh', proc.stdout + proc.stderr)
 
-    def test_other_reserved_or_invalid_key_names_are_refused(self):
-        for key in ['NODE_OPTIONS', 'LD_PRELOAD', 'PATH', 'GITHUB_PATH', 'RUNNER_TEMP', 'bash_env', 'A=B', 'X\nBASH_ENV', 'a b', '1ABC']:
+    DENIED_NAMES = [
+        'NODE_OPTIONS', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES', 'PATH', 'GITHUB_PATH', 'RUNNER_TEMP',
+        'ACTIONS_RUNTIME_TOKEN', 'ENV', 'BASH_FUNC_x%%', 'IFS', 'SHELL', 'HOME', 'PS4', 'PROMPT_COMMAND',
+        'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_PARAMETERS', 'GIT_SSH_COMMAND',
+        'GIT_EXEC_PATH', 'GIT_ASKPASS', 'GIT_EXTERNAL_DIFF',
+        'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS',
+        'PERL5OPT', 'PERL5LIB', 'RUBYOPT', 'RUBYLIB', 'PYTHONPATH', 'PYTHONSTARTUP', 'NODE_EXTRA_CA_CERTS', 'NODE_PATH',
+        'LESSOPEN', 'GCONV_PATH',
+        'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY',
+        'SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE',
+        'TF_CLI_ARGS', 'TF_CLI_ARGS_plan', 'TF_CLI_CONFIG_FILE', 'KUBECONFIG',
+        'PIP_INDEX_URL', 'PIP_EXTRA_INDEX_URL', 'NPM_CONFIG_REGISTRY', 'npm_config_registry',
+    ]
+    INVALID_NAMES = ['', 'A=B', 'X\nBASH_ENV', 'X\rY', 'a<<b']
+    ACCEPTED_NAMES = ['my-key', 'my.key', 'lower_case', 'bash_env', 'a b', '1ABC', 'TF_VAR_x', 'ARM_CLIENT_ID',
+                      'KUBE_CONFIG_PATH', 'TF_TOKEN_terraform__registry_nrk_cloud', 'GITLAB_TOKEN']
+
+    def test_reserved_and_invalid_key_names_are_refused(self):
+        for key in self.DENIED_NAMES + self.INVALID_NAMES:
             with self.subTest(key=key):
                 proc, env, out, _ = self.run_action({key: 'v'})
                 self.assertNotEqual(proc.returncode, 0)
-                self.assertEqual(env, {})
-                self.assertEqual(out, {})
+                self.assertEqual((env, out), ({}, {}))
+                self.assertNotIn("'v'", proc.stdout)
+
+    def test_legitimate_key_names_are_accepted(self):
+        for key in self.ACCEPTED_NAMES:
+            with self.subTest(key=key):
+                proc, env, out, _ = self.run_action({key: 'v1'})
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(env[key], 'v1')
+                self.assertEqual(out[key], 'v1')
+
+    def test_azure_requires_tenant_subscription_and_resource_group(self):
+        for rg in ['', ' ']:
+            with self.subTest(resource_group=rg):
+                proc, env, out, _ = self.run_action({}, INPUT_AZURE='true', INPUT_AZURE_TENANT_ID='t',
+                                                    INPUT_AZURE_SUBSCRIPTION_ID='s', INPUT_AZURE_RESOURCE_GROUP=rg)
+                self.assertEqual(proc.returncode, 1)
+                self.assertIn('--azure-resource-group', proc.stderr)
+                self.assertNotIn('Traceback', proc.stderr)
+                self.assertEqual((env, out), ({}, {}))
+
+    def test_vault_error_body_is_not_logged(self):
+        FakeVault.error_body = 'SECRET-ERROR-BODY'
+        self.addCleanup(setattr, FakeVault, 'error_body', None)
+        proc, env, out, _ = self.run_action({})
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn('SECRET-ERROR-BODY', proc.stdout + proc.stderr)
 
     def test_normal_variables_keep_documented_contract(self):
         proc, env, out, _ = self.run_action({'TF_VAR_x': 'plain'})
