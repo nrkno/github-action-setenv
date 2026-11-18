@@ -274,10 +274,12 @@ def append_file_command(path, name, value):
 
 
 def mask_value(value):
-    """Register the original value; the runner also masks its individual lines."""
-    if value.strip():
+    """Register the original value and explicit line masks for older runners."""
+    for mask in dict.fromkeys((value, *re.split(r'[\r\n]', value))):
+        if not mask.strip():
+            continue
         # Match the workflow-command data encoding, escaping '%' before CR/LF.
-        escaped = value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+        escaped = mask.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
         print(f"::add-mask::{escaped}", flush=True)
 
 

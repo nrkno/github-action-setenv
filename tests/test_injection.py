@@ -158,13 +158,25 @@ class SetenvInjectionTest(unittest.TestCase):
     def test_value_containing_fake_delimiter_stays_one_value(self):
         self.assert_value_intact('x\nghadelim_deadbeef\nBASH_ENV=/tmp/evil.sh')
 
-    def test_mask_command_encodes_the_whole_value_without_changing_file_output(self):
+    def test_mask_commands_encode_the_whole_value_and_each_line_without_changing_file_output(self):
         value = '50% complete (literal %0A and %0D)%25\r\nsecond line\rthird line\nlast line'
         proc, _ = self.assert_value_intact(value)
         self.assertEqual(proc.stdout.splitlines(), [
             '::add-mask::role-id-1',
             '::add-mask::secret-id-1',
             '::add-mask::50%25 complete (literal %250A and %250D)%2525%0D%0Asecond line%0Dthird line%0Alast line',
+            '::add-mask::50%25 complete (literal %250A and %250D)%2525',
+            '::add-mask::second line',
+            '::add-mask::third line',
+            '::add-mask::last line',
+        ])
+
+    def test_single_line_value_is_masked_once(self):
+        proc, _ = self.assert_value_intact('50% complete')
+        self.assertEqual(proc.stdout.splitlines(), [
+            '::add-mask::role-id-1',
+            '::add-mask::secret-id-1',
+            '::add-mask::50%25 complete',
         ])
 
     def test_stdout_contains_only_mask_commands(self):
@@ -245,6 +257,8 @@ class SetenvInjectionTest(unittest.TestCase):
             '::add-mask::role-id-1',
             '::add-mask::secret-id-1',
             '::add-mask::50%25%0Acomplete',
+            '::add-mask::50%25',
+            '::add-mask::complete',
         ])
 
     def test_cached_credentials_are_validated_too(self):
