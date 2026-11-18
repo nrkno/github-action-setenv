@@ -9,6 +9,14 @@
       "semanticCommits": "disabled"
     },
     {
+      "description": "The Docker base image also changes the action runtime, so tag and digest updates must trigger a release.",
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["python"],
+      "pinDigests": true,
+      "commitMessagePrefix": "fix(deps):",
+      "semanticCommits": "disabled"
+    },
+    {
       "description": "Step-level actions keep full semver tags: .github/workflows/actions.lock records and enforces the SHAs, so Renovate must not pin digests here (overrides the preset's pinGitHubActionDigests).",
       "matchManagers": ["github-actions"],
       "matchDepTypes": ["action"],

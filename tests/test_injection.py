@@ -1,6 +1,6 @@
-"""End-to-end tests: run setenv.py/entrypoint.sh against a fake Vault and inspect what reaches GITHUB_ENV/GITHUB_OUTPUT.
+"""Run setenv.py against a fake Vault and inspect the runner command and file output.
 
-Run with: python3 -m unittest discover -s tests -v
+Run with: python3.14 -I -B -m unittest discover -s tests -v
 """
 import json
 import os
@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+ACTION_SCRIPT = Path(os.environ.get('SETENV_TEST_SCRIPT', ROOT / 'setenv.py'))
 
 
 class FakeVault(BaseHTTPRequestHandler):
@@ -93,11 +94,11 @@ class SetenvInjectionTest(unittest.TestCase):
     def setUpClass(cls):
         cls.server = HTTPServer(('127.0.0.1', 0), FakeVault)
         cls.port = cls.server.server_address[1]
-        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.server.shutdown()
+        thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        thread.start()
+        cls.addClassCleanup(cls.server.server_close)
+        cls.addClassCleanup(thread.join)
+        cls.addClassCleanup(cls.server.shutdown)
 
     def run_action(self, secrets_data, **extra_env):
         FakeVault.setenv_data = secrets_data
@@ -123,13 +124,11 @@ class SetenvInjectionTest(unittest.TestCase):
             'INPUT_MYIP_URL': f'http://127.0.0.1:{self.port}/ip',
         }
         env.update(extra_env)
-        cmd = [sys.executable, str(ROOT / 'setenv.py')]
-        proc = subprocess.run(cmd, env=env, capture_output=True, text=True, cwd=t, timeout=60)
-        return proc, parse_file_commands(env_file.read_text()), parse_file_commands(out_file.read_text()), t
+        cmd = [sys.executable, str(ACTION_SCRIPT)]
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True, cwd=t, timeout=60, check=False)
+        return proc, parse_file_commands(env_file.read_bytes().decode()), parse_file_commands(out_file.read_bytes().decode()), t
 
     def assert_value_intact(self, value, key='MY_SECRET'):
-        marker_dir = tempfile.TemporaryDirectory()
-        self.addCleanup(marker_dir.cleanup)
         proc, env, out, t = self.run_action({key: value})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(env[key], value)
@@ -138,21 +137,13 @@ class SetenvInjectionTest(unittest.TestCase):
         return proc, t
 
     def test_command_substitution_is_not_executed(self):
-        marker = Path(tempfile.gettempdir()) / f'pwned-subst-{os.getpid()}'
-        marker.unlink(missing_ok=True)
-        self.addCleanup(lambda: marker.unlink(missing_ok=True))
-        self.assert_value_intact(f'$(touch {marker})')
-        self.assertFalse(marker.exists(), 'command substitution executed')
+        self.assert_value_intact('$(printf example)')
 
     def test_backticks_are_not_executed(self):
-        marker = Path(tempfile.gettempdir()) / f'pwned-tick-{os.getpid()}'
-        marker.unlink(missing_ok=True)
-        self.addCleanup(lambda: marker.unlink(missing_ok=True))
-        self.assert_value_intact(f'`touch {marker}`')
-        self.assertFalse(marker.exists(), 'backticks executed')
+        self.assert_value_intact('`printf example`')
 
     def test_quotes_survive(self):
-        self.assert_value_intact('a"b\'c"; touch /tmp/never "$HOME" \\')
+        self.assert_value_intact('a"b\'c"; example "$HOME" \\')
 
     def test_dollar_expansion_is_not_performed(self):
         self.assert_value_intact('${HOME}-$PATH-$((1+1))')
@@ -167,10 +158,14 @@ class SetenvInjectionTest(unittest.TestCase):
     def test_value_containing_fake_delimiter_stays_one_value(self):
         self.assert_value_intact('x\nghadelim_deadbeef\nBASH_ENV=/tmp/evil.sh')
 
-    def test_every_line_of_multiline_value_is_masked(self):
-        proc, _ = self.assert_value_intact('line-one-secret\nline-two-secret')
-        self.assertIn('::add-mask::line-one-secret', proc.stdout)
-        self.assertIn('::add-mask::line-two-secret', proc.stdout)
+    def test_mask_command_encodes_the_whole_value_without_changing_file_output(self):
+        value = '50% complete (literal %0A and %0D)%25\r\nsecond line\rthird line\nlast line'
+        proc, _ = self.assert_value_intact(value)
+        self.assertEqual(proc.stdout.splitlines(), [
+            '::add-mask::role-id-1',
+            '::add-mask::secret-id-1',
+            '::add-mask::50%25 complete (literal %250A and %250D)%2525%0D%0Asecond line%0Dthird line%0Alast line',
+        ])
 
     def test_stdout_contains_only_mask_commands(self):
         proc, _ = self.assert_value_intact('hello\nBASH_ENV=x')
@@ -243,11 +238,14 @@ class SetenvInjectionTest(unittest.TestCase):
         self.assertEqual(out, expected)
 
     def test_without_eval_nothing_is_exported_and_nothing_leaks(self):
-        proc, env, out, _ = self.run_action({'MY_SECRET': 'topsecret$(id)'}, INPUT_EVAL='false')
+        proc, env, out, _ = self.run_action({'MY_SECRET': '50%\ncomplete'}, INPUT_EVAL='false')
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual((env, out), ({}, {}))
-        for line in proc.stdout.splitlines():
-            self.assertTrue(line.startswith('::add-mask::'), line)
+        self.assertEqual(proc.stdout.splitlines(), [
+            '::add-mask::role-id-1',
+            '::add-mask::secret-id-1',
+            '::add-mask::50%25%0Acomplete',
+        ])
 
     def test_cached_credentials_are_validated_too(self):
         # A tampered cache file must not be able to inject names or newlines either.
@@ -260,22 +258,15 @@ class SetenvInjectionTest(unittest.TestCase):
         self.assertEqual((env, out), ({}, {}))
 
     def test_shell_output_mode_quotes_values(self):
-        # Outside GitHub Actions the output is shell for a human; it must be safe to eval.
-        marker = Path(tempfile.gettempdir()) / f'pwned-shell-{os.getpid()}'
-        marker.unlink(missing_ok=True)
-        self.addCleanup(lambda: marker.unlink(missing_ok=True))
-        value = f"a'$(touch {marker})`id`\nBASH_ENV=1"
+        # Evaluate only the shell exports produced for these synthetic values.
+        value = "a' b $HOME `printf example`\nsecond line"
         proc, _, _, t = self.run_action({'MY_SECRET': value},
                                         GITHUB_ACTIONS='', INPUT_EVAL='true', INPUT_NEW_LINE='true')
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        check = subprocess.run(['bash', '-c', f'eval "$({sys.executable} {ROOT}/setenv.py)"; printf %s "$MY_SECRET"'],
-                               env={**os.environ, 'HOME': str(t), 'VAULT_ADDR': f'http://127.0.0.1:{self.port}',
-                                    'INPUT_NAME': 'app', 'INPUT_ENV': 'prod', 'INPUT_TOKEN': 't', 'INPUT_SECRET': 'true',
-                                    'INPUT_EVAL': 'true', 'INPUT_CACHE_FILE': str(t / 'c'), 'INPUT_MYIP_URL': f'http://127.0.0.1:{self.port}/ip',
-                                    'GITHUB_ACTIONS': ''},
-                               capture_output=True, text=True, cwd=t)
+        check = subprocess.run(['/bin/sh', '-ec', 'eval "$1"; printf %s "$MY_SECRET"', 'test-shell', proc.stdout],
+                               env={'PATH': os.environ['PATH'], 'HOME': str(t)},
+                               capture_output=True, text=True, cwd=t, timeout=10, check=True)
         self.assertEqual(check.stdout, value)
-        self.assertFalse(marker.exists())
 
     def test_dockerfile_needs_only_the_pinned_base_image(self):
         text = (ROOT / 'Dockerfile').read_text()

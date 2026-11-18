@@ -274,10 +274,11 @@ def append_file_command(path, name, value):
 
 
 def mask_value(value):
-    """Mask every line of a (possibly multi-line) value. Each line is printed as a literal workflow command."""
-    for line in value.replace('\r\n', '\n').split('\n'):
-        if line.strip():
-            print(f"::add-mask::{line}", flush=True)
+    """Register the original value; the runner also masks its individual lines."""
+    if value.strip():
+        # Match the workflow-command data encoding, escaping '%' before CR/LF.
+        escaped = value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+        print(f"::add-mask::{escaped}", flush=True)
 
 
 def output_env_vars(env_vars):

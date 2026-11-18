@@ -25,5 +25,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run injection tests
-        run: python3 -I -m unittest discover -s tests -v
+      - name: Build the action image
+        run: docker build --tag setenv-test .
+
+      - name: Test the packaged action against fake Vault
+        run: |
+          docker run --rm --network none \
+            --volume "$PWD:/src:ro" \
+            --env SETENV_TEST_SCRIPT=/setenv.py \
+            --entrypoint python3 setenv-test \
+            -I -B -m unittest discover -s /src/tests -v

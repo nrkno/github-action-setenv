@@ -130,7 +130,10 @@ jobs:
 
 ## Security notes
 
-- **How values reach the job.** With `eval: true` in GitHub Actions the action writes each variable to `$GITHUB_ENV` and `$GITHUB_OUTPUT` itself, using a random heredoc delimiter, and prints `::add-mask::` for every line of the value. It no longer prints shell code that is evaluated. Values containing `$(...)`, backticks, quotes or newlines are passed through unchanged and are never executed. Without `eval`, nothing is exported and nothing is printed except mask commands. Outside GitHub Actions the printed shell assignments are quoted with `shlex`, and names must be plain shell identifiers.
+These notes apply to the Dockerfile-based revision described below, not to
+older releases that still run a prebuilt image.
+
+- **How values reach the job.** With `eval: true` in GitHub Actions the action writes each value to `$GITHUB_ENV` and `$GITHUB_OUTPUT` as data, using a random heredoc delimiter. It does not evaluate shell code. It escapes percent signs and line endings in each `::add-mask::` command so the runner can register the original value and its individual lines. This encoding does not change the values in the environment or output files. Without `eval`, the action writes neither file and emits only mask commands on standard output. Do not print the values in later steps; masking is not a substitute for keeping secrets out of logs.
 - **Variable names are checked, not allow-listed.** A name is refused (the action exits non-zero, no variable is written) if it is empty, contains `=`, CR, LF, NUL or `<<`, or matches the deny list below. Hyphens, dots and lowercase names are accepted. The deny list is case-sensitive except where noted.
   - Shell and loader: `BASH_*`, `ENV`, `PATH`, `IFS`, `SHELL`, `HOME`, `PS4`, `PROMPT_COMMAND`, `LD_*`, `DYLD_*`, `GCONV_PATH`, `LESSOPEN`, `LESSCLOSE`.
   - Language runtimes: `PYTHON*`, `NODE_OPTIONS`, `NODE_PATH`, `NODE_EXTRA_CA_CERTS`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`.
@@ -140,10 +143,47 @@ jobs:
 
   This is a deny list. It cannot know every variable that a later step or third-party tool treats as configuration, so a Vault writer can still set variables that are not listed. Treat write access to the `setenv` secret and `vault_secret` paths as access to the job's environment. An allow-list (for example `TF_VAR_*`, `ARM_*`, `TF_TOKEN_*`) would be stricter but breaks callers that export other names, so it has not been adopted.
 - **Everything exported is visible to all later steps in the job.** Only use this action in jobs that do not run untrusted third-party code.
-- **Image.** `action.yaml` uses `image: Dockerfile`, so the container is built from the action ref the workflow pins, and the code that runs always matches that ref. No image is published to GHCR any more; older `ghcr.io/nrkno/github-action-setenv` tags remain only for callers still pinned to old releases. The base image in `Dockerfile` is pinned by digest, and Renovate should keep it current. The first step of a job using this action takes longer because it builds the image.
+- **Image.** This Docker action requires a Linux runner that can build and run containers. `action.yaml` uses `image: Dockerfile`, so the runner builds the action from the pinned ref and must be able to pull the digest-pinned Python Alpine base from Docker Hub (or a configured mirror). No separate action image is published to GHCR; old releases that reference GHCR still pull their old images. Renovate uses `fix(deps):` for Python image updates so tag and digest changes trigger an action release.
 - **Release job.** `release.yaml` installs the locked npm toolchain with `npm ci --ignore-scripts`. Its checkout keeps credentials because `semantic-release-tags` pushes tags with a plain `git push`. The job has `contents`, `issues` and `pull-requests` write only and no package permissions.
-- **Azure.** With `azure: true`, tenant ID, subscription ID and resource group are all required, and the action fails if the credentials or resource group cannot be validated within about five minutes.
-- **Tests.** `python3 -I -m unittest discover -s tests -v` runs the injection tests against a fake Vault.
+
+## Caller compatibility
+
+- With `azure: true`, `azure_tenant_id`, `azure_subscription_id` and
+  `azure_resource_group` must all be nonblank. The credentials must be able to
+  list Azure storage accounts in the subscription, and the check must find
+  the resource group in a returned storage account ID. The action fails if
+  validation does not succeed in 60 attempts; network time counts in addition
+  to the five-second retry delays.
+- Set `vault_secret_id_cidr` or provide a reachable `myip_url` that returns only
+  an IPv4 or IPv6 address. The default is `https://icanhazip.com`; the action
+  adds `/32` or `/128` to the address. Action inputs `cluster`, `gcp`, and
+  `vault_secret` take comma-separated entries; the CLI takes repeatable flags.
+- A local `.envrc` that fetches `contents/setenv.py` without `?ref=...` follows
+  the default branch, regardless of any pinned GitHub Action release. Pin a
+  reviewed script revision and check the host interpreter separately from the
+  action image. The project's Python baseline is 3.14.
+- Outside GitHub Actions (`GITHUB_ACTIONS` unset), `--eval` still prints
+  POSIX-shell `export` statements. Names must be plain shell identifiers and
+  must not be on the same deny list. Values are shell-quoted. If your local
+  shell consumes these statements, evaluate only the output of the reviewed
+  script, check the command succeeded first, and keep the output quoted:
+
+  ```sh
+  exports=$(python3.14 ./setenv.py --name my-app --env prod --eval) &&
+    eval "$exports"
+  ```
+
+  Replace `eval $(...)` in local callers: unquoted command substitution can
+  change whitespace and expand globs before `eval` receives the output. Do
+  not enable shell tracing while loading credentials.
+
+## Tests
+
+Run `python3.14 -I -B -m unittest discover -s tests -v` for a fast source check
+against a local fake Vault. Pull-request CI builds the Dockerfile and runs the
+same tests against `/setenv.py` inside that image, with only loopback access.
+These checks do not exercise the GitHub runner's real command parser, a
+self-hosted runner's Docker setup, or live Azure, Vault or OIDC.
 
 ## Lockfile upkeep
 
