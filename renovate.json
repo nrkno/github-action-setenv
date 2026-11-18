@@ -1,4 +1,32 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>nrkno/nrk-bot-configs//plattform/utvikleropplevelse/renovate/renovate"]
+  "extends": ["local>nrkno/nrk-bot-configs//plattform/utvikleropplevelse/renovate/renovate"],
+  "packageRules": [
+    {
+      "description": "Action bumps change what consumers execute, so they must release a patch (fix) and be visible in the release notes.",
+      "matchManagers": ["github-actions"],
+      "commitMessagePrefix": "fix(deps):",
+      "semanticCommits": "disabled"
+    },
+    {
+      "description": "The Docker base image also changes the action runtime, so tag and digest updates must trigger a release.",
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["python"],
+      "pinDigests": true,
+      "commitMessagePrefix": "fix(deps):",
+      "semanticCommits": "disabled"
+    },
+    {
+      "description": "Step-level actions keep full semver tags: .github/workflows/actions.lock records and enforces the SHAs, so Renovate must not pin digests here (overrides the preset's pinGitHubActionDigests).",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["action"],
+      "pinDigests": false
+    },
+    {
+      "description": "Reusable workflow calls (jobs.<job_id>.uses) are not covered by the lockfile: keep them pinned to a full commit SHA with a version comment.",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["workflow"],
+      "pinDigests": true
+    }
+  ]
 }

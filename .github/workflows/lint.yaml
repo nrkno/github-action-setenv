@@ -1,9 +1,37 @@
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   commitlint:
-    uses: nrkno/github-workflow-semantic-release/.github/workflows/workflow.yaml@v4
+    # The called workflow declares contents: write / pull-requests: read on its (here disabled)
+    # release job. A caller must grant at least that, or the run fails at startup.
+    permissions:
+      contents: write
+      pull-requests: read
+    # v5.1.5. The hardened version of this workflow is not released yet; re-pin when it is.
+    uses: nrkno/github-workflow-semantic-release/.github/workflows/workflow.yaml@6a8585e39eabcb53cdbdebfcc76eb9672199089e # v5.1.5
     with:
-      runs-on: ubuntu-22.04
+      runs-on: ubuntu-24.04
       release-enabled: false
+
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the action image
+        run: docker build --tag setenv-test .
+
+      - name: Test the packaged action against fake Vault
+        run: |
+          docker run --rm --network none \
+            --volume "$PWD:/src:ro" \
+            --env SETENV_TEST_SCRIPT=/setenv.py \
+            --entrypoint python3 setenv-test \
+            -I -B -m unittest discover -s /src/tests -v
